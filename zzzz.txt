@@ -1,0 +1,17 @@
+test sync
+
+
+t.me/MSBankCrypto_bot.
+
+Use this token to access the HTTP API:
+
+8487855373:AAEZ8Al7Su6BzqCECCuF7iRgULk1bBS7Ly0
+
+788284460
+
+
+Keep your token secure and store it safely, it can be used by anyone to control your bot.
+
+https://core.telegram.org/bots/api
+
+https://api.telegram.org/bot8487855373:AAEZ8Al7Su6BzqCECCuF7iRgULk1bBS7Ly0/getUpdates

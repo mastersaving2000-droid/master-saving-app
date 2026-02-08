@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-deep: #0a0a0a;
+  --gold-primary: #FFD700;
+  --silver-primary: #C0C0C0;
+  --blue-neon: #00F3FF;
+  --red-neon: #FF2A6D;
+}
+
+body {
+  background-color: var(--bg-deep);
+  color: #e5e5e5;
+  font-family: 'Courier New', Courier, monospace; /* Tech vibes */
+  background-image: 
+    radial-gradient(circle at 50% 0%, #1a1a2e 0%, transparent 70%),
+    radial-gradient(circle at 80% 80%, #150000 0%, transparent 50%);
+}
+
+/* --- UTILITIES MEWAH --- */
+
+/* Teks Emas Mengkilap */
+.text-gold-gradient {
+  background: linear-gradient(to bottom, #FFD700, #FDB931, #9e7f11);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0px 2px 10px rgba(255, 215, 0, 0.3);
+}
+
+/* Teks Silver Elegan */
+.text-silver-gradient {
+  background: linear-gradient(to bottom, #ffffff, #d7d7d7, #8e8e8e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Kartu 3D (Tidak Flat) */
+.card-3d {
+  background: linear-gradient(145deg, #121212, #0e0e0e);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 
+    5px 5px 15px rgba(0, 0, 0, 0.5),
+    -2px -2px 10px rgba(255, 255, 255, 0.03),
+    inset 0 0 20px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(10px);
+}
+
+/* Efek Glow Halus saat Hover */
+.glow-hover:hover {
+  box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
+  border-color: rgba(0, 243, 255, 0.4);
+}
+
+/* Modal Popup yang Timbul (Numpuk di atas background) */
+.modal-content {
+  background: #1a1a1a;
+  border: 1px solid var(--blue-neon);
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.9);
+}
+
+input {
+    color: white; 
+    background: #050505;
+}
