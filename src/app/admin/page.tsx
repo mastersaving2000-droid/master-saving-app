@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../../lib/firebase"; 
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, query, where, getDocs, doc, runTransaction, updateDoc, getCountFromServer } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, runTransaction, updateDoc, getCountFromServer, deleteDoc } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 
 // ⚠️ GANTI DENGAN EMAIL ADMIN ASLI KAMU ⚠️
@@ -12,7 +12,7 @@ export default function AdminPanel() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [isProfitRunning, setIsProfitRunning] = useState(false); 
-  const [activeTab, setActiveTab] = useState<"REQUESTS" | "USERS">("REQUESTS"); // Sistem Tab Admin
+  const [activeTab, setActiveTab] = useState<"REQUESTS" | "USERS">("REQUESTS"); 
   
   // Data Lists
   const [wdRequests, setWdRequests] = useState<any[]>([]);
@@ -47,7 +47,6 @@ export default function AdminPanel() {
     } catch (err) { console.error(err); }
   };
 
-  // --- MENGAMBIL STATS SEKALIGUS MENGOLAH DATA USER LIST ---
   const fetchStatsAndUsers = async () => {
     try {
         const collUser = collection(db, "users");
@@ -57,32 +56,27 @@ export default function AdminPanel() {
         let totalSaldo = 0;
         let rawUsers: any[] = [];
 
-        // Kumpulkan data mentah
         allUsersSnap.forEach(doc => { 
             const data = doc.data();
             totalSaldo += data.finance?.saldo_utama || 0; 
             rawUsers.push({ id: doc.id, ...data });
         });
 
-        // OLAH DATA USER: Hitung downline secara LOKAL (Hemat kuota Firestore!)
         const enrichedUsers = rawUsers.map(u => ({
             uid: u.id,
             nama: u.profile?.nama || "Tanpa Nama",
             hp: u.profile?.hp || "-",
-            email: u.email || "-", // Firebase auth email mungkin ga tersimpan di profile, gpp kita siapkan
+            email: u.email || "-", 
             saldo: u.finance?.saldo_utama || 0,
-            created_at: u.created_at || "2024-01-01T00:00:00.000Z", // Fallback date
-            // Hitung manual brp org yg upline_1 nya adalah UID user ini
+            created_at: u.created_at || "2024-01-01T00:00:00.000Z", 
             d1: rawUsers.filter(x => x.network?.upline_1 === u.id).length,
             d2: rawUsers.filter(x => x.network?.upline_2 === u.id).length,
             d3: rawUsers.filter(x => x.network?.upline_3 === u.id).length,
         }));
 
-        // Default sort by Saldo Tertinggi
         enrichedUsers.sort((a, b) => b.saldo - a.saldo);
         setUsersList(enrichedUsers);
 
-        // Ambil data Deposit & WD Success
         const snapDepoDone = await getDocs(query(collection(db, "deposits"), where("status", "==", "approved")));
         let totalIn = 0; snapDepoDone.forEach(doc => { totalIn += doc.data().total_transfer || 0; });
 
@@ -94,7 +88,6 @@ export default function AdminPanel() {
     } catch (err) { console.error("Gagal hitung stats", err); }
   };
 
-  // --- LOGIC SORTIR TABEL USER ---
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') { direction = 'desc'; }
@@ -108,6 +101,18 @@ export default function AdminPanel() {
     setSortConfig({ key, direction });
   };
 
+  // --- LOGIC HAPUS AKUN DARI ADMIN ---
+  const handleDeleteUserAdmin = async (uid: string, nama: string) => {
+    if (!confirm(`⚠️ DANGER ZONE!\n\nYakin ingin memusnahkan akun FRAUD: ${nama}?\n\n- Data & Saldo akan hangus selamanya.\n- Nomor HP bisa didaftarkan ulang.`)) return;
+    
+    try {
+        await deleteDoc(doc(db, "users", uid));
+        alert(`✅ User ${nama} berhasil dimusnahkan dari Database.\n\n(Note: Untuk menghapus email dari sistem login, Admin bisa menghapusnya secara manual di tab Authentication pada Console Firebase).`);
+        fetchStatsAndUsers(); // Refresh tabel
+    } catch (error: any) {
+        alert("Gagal menghapus user: " + error.message);
+    }
+  };
 
   const handleRunDailyProfit = async () => {
     if (!confirm("⚠️ PERINGATAN KERAS!\n\nApakah Anda yakin ingin menjalankan PROFIT HARIAN sekarang?\n\nKlik OK untuk melanjutkan.")) return;
@@ -279,7 +284,7 @@ export default function AdminPanel() {
             <button onClick={() => setActiveTab("USERS")} className={`pb-2 font-bold px-4 ${activeTab === "USERS" ? "text-blue-500 border-b-2 border-blue-500" : "text-gray-500 hover:text-white"}`}>DATABASE USERS</button>
         </div>
 
-        {/* TAB 1: REQUESTS (DEPO & WD) */}
+        {/* TAB 1: REQUESTS */}
         {activeTab === "REQUESTS" && (
             <div className="grid md:grid-cols-2 gap-10">
                 <div>
@@ -318,7 +323,7 @@ export default function AdminPanel() {
             </div>
         )}
 
-        {/* TAB 2: DATABASE USERS LENGKAP */}
+        {/* TAB 2: DATABASE USERS LENGKAP DENGAN TOMBOL HAPUS */}
         {activeTab === "USERS" && (
             <div className="bg-[#111] border border-gray-800 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
@@ -330,6 +335,7 @@ export default function AdminPanel() {
                                 <th className="p-4 cursor-pointer hover:text-white text-right" onClick={() => handleSort('saldo')}>SALDO (ASET) {sortConfig.key==='saldo' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
                                 <th className="p-4 text-center cursor-pointer hover:text-white" onClick={() => handleSort('d1')}>TIM (LVL 1|2|3)</th>
                                 <th className="p-4 cursor-pointer hover:text-white" onClick={() => handleSort('created_at')}>TGL DAFTAR {sortConfig.key==='created_at' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
+                                <th className="p-4 text-center text-red-500">AKSI</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-800 text-gray-300">
@@ -355,6 +361,15 @@ export default function AdminPanel() {
                                     </td>
                                     <td className="p-4 text-xs text-gray-500">
                                         {new Date(user.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <button 
+                                            onClick={() => handleDeleteUserAdmin(user.uid, user.nama)} 
+                                            className="bg-red-900/30 text-red-500 border border-red-900/50 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition"
+                                            title="Hapus Permanen Akun Ini"
+                                        >
+                                            HAPUS
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
