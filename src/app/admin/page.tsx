@@ -11,7 +11,7 @@ const ADMIN_EMAIL = "mastersaving2000@gmail.com";
 export default function AdminPanel() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [isProfitRunning, setIsProfitRunning] = useState(false); // Loading khusus tombol profit
+  const [isProfitRunning, setIsProfitRunning] = useState(false); 
   
   // Data Lists
   const [wdRequests, setWdRequests] = useState<any[]>([]);
@@ -80,9 +80,9 @@ export default function AdminPanel() {
     } catch (err) { console.error("Gagal hitung stats", err); }
   };
 
-  // --- 3. LOGIC TRIGGER PROFIT HARIAN (NEW FEATURE) ---
+  // --- 3. LOGIC TRIGGER PROFIT HARIAN (SUDAH DIPERBAIKI: READ BEFORE WRITE) ---
   const handleRunDailyProfit = async () => {
-    if (!confirm("⚠️ PERINGATAN KERAS!\n\nApakah Anda yakin ingin menjalankan PROFIT HARIAN sekarang?\n\n1. Saldo member akan bertambah 0.35%.\n2. Upline akan dapat bonus pasif.\n3. History akan tercatat.\n\nKlik OK untuk melanjutkan.")) return;
+    if (!confirm("⚠️ PERINGATAN KERAS!\n\nApakah Anda yakin ingin menjalankan PROFIT HARIAN sekarang?\n\nKlik OK untuk melanjutkan.")) return;
     
     setIsProfitRunning(true);
     let processedCount = 0;
@@ -91,25 +91,35 @@ export default function AdminPanel() {
         const allUsersSnap = await getDocs(collection(db, "users"));
         const timestamp = new Date().toISOString();
 
-        // Loop setiap user
         for (const userDoc of allUsersSnap.docs) {
             const uData = userDoc.data();
             const currentSaldo = uData.finance?.saldo_utama || 0;
 
-            // Syarat: Saldo minimal 50.000 baru dapat profit mining
             if (currentSaldo >= 50000) {
                 
                 await runTransaction(db, async (transaction) => {
-                    // A. HITUNG PROFIT PRIBADI (0.35% dari Saldo)
-                    const profitHarian = Math.floor(currentSaldo * 0.0035); 
+                    // --- TAHAP 1: BACA SEMUA DATA DULU (READ) ---
+                    // Siapkan referensi upline
+                    const u1Id = uData.network?.upline_1;
+                    const u2Id = uData.network?.upline_2;
+                    const u3Id = uData.network?.upline_3;
+
+                    let u1Doc, u2Doc, u3Doc;
                     
-                    // Update Saldo User
+                    // Baca data upline SEBELUM melakukan write apapun
+                    if (u1Id) { u1Doc = await transaction.get(doc(db, "users", u1Id)); }
+                    if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
+                    if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
+
+                    // --- TAHAP 2: KALKULASI & TULIS DATA (WRITE) ---
+                    
+                    // A. Update User Sendiri
+                    const profitHarian = Math.floor(currentSaldo * 0.0035); 
                     transaction.update(doc(db, "users", userDoc.id), {
                         "finance.saldo_utama": currentSaldo + profitHarian,
-                        "finance.last_profit_calc": timestamp // Reset timer mining visual
+                        "finance.last_profit_calc": timestamp
                     });
 
-                    // Catat History Profit Pribadi
                     const logRef = doc(collection(db, "profit_logs"));
                     transaction.set(logRef, {
                         uid: userDoc.id,
@@ -118,114 +128,110 @@ export default function AdminPanel() {
                         desc: "Profit Mining Harian"
                     });
 
-                    // B. BAGI BONUS KE UPLINE (Passive Income)
-                    // Logic: Upline dapat % dari PROFIT downline (Bukan dari saldo)
-                    // Lvl 1: 10% dari Profit, Lvl 2: 5%, Lvl 3: 2%
-                    const uplines = [
-                        { uid: uData.network?.upline_1, pct: 0.10, lvl: 1 },
-                        { uid: uData.network?.upline_2, pct: 0.05, lvl: 2 },
-                        { uid: uData.network?.upline_3, pct: 0.02, lvl: 3 }
-                    ];
+                    // B. Update Upline (Jika ada datanya)
+                    // Level 1 (10% dari Profit)
+                    if (u1Doc && u1Doc.exists()) {
+                        const bonus = Math.floor(profitHarian * 0.10);
+                        if (bonus > 0) {
+                            const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
+                            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
+                            transaction.set(doc(collection(db, "bonuses")), {
+                                uid: u1Id, amount: bonus, from_nama: uData.profile.nama, level: 1, created_at: timestamp, type: "PASSIVE"
+                            });
+                        }
+                    }
 
-                    for (const up of uplines) {
-                        if (up.uid) {
-                            const upRef = doc(db, "users", up.uid);
-                            const upSnap = await transaction.get(upRef);
-                            if (upSnap.exists()) {
-                                const bonusAmount = Math.floor(profitHarian * up.pct);
-                                if (bonusAmount > 0) {
-                                    // Tambah Saldo Upline
-                                    const upSaldo = upSnap.data().finance?.saldo_utama || 0;
-                                    transaction.update(upRef, { "finance.saldo_utama": upSaldo + bonusAmount });
-                                    
-                                    // Catat History Bonus Upline
-                                    const bonusRef = doc(collection(db, "bonuses"));
-                                    transaction.set(bonusRef, {
-                                        uid: up.uid,
-                                        amount: bonusAmount,
-                                        from_nama: uData.profile.nama, 
-                                        level: up.lvl,
-                                        created_at: timestamp,
-                                        type: "PASSIVE" // Tanda ini bonus pasif harian
-                                    });
-                                }
-                            }
+                    // Level 2 (5% dari Profit)
+                    if (u2Doc && u2Doc.exists()) {
+                        const bonus = Math.floor(profitHarian * 0.05);
+                        if (bonus > 0) {
+                            const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
+                            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
+                            transaction.set(doc(collection(db, "bonuses")), {
+                                uid: u2Id, amount: bonus, from_nama: uData.profile.nama, level: 2, created_at: timestamp, type: "PASSIVE"
+                            });
+                        }
+                    }
+
+                    // Level 3 (2% dari Profit)
+                    if (u3Doc && u3Doc.exists()) {
+                        const bonus = Math.floor(profitHarian * 0.02);
+                        if (bonus > 0) {
+                            const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
+                            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": newSaldo });
+                            transaction.set(doc(collection(db, "bonuses")), {
+                                uid: u3Id, amount: bonus, from_nama: uData.profile.nama, level: 3, created_at: timestamp, type: "PASSIVE"
+                            });
                         }
                     }
                 });
                 processedCount++;
             }
         }
-        alert(`✅ SUKSES! Profit harian telah dibagikan ke ${processedCount} member aktif.`);
-        fetchStats(); // Refresh angka dashboard
+        alert(`✅ SUKSES! Profit dibagikan ke ${processedCount} member.`);
+        fetchStats(); 
     } catch (e:any) {
         console.error(e);
-        alert("Gagal menjalankan profit harian: " + e.message);
+        alert("Gagal: " + e.message);
     } finally {
         setIsProfitRunning(false);
     }
   };
 
 
-  // --- 4. LOGIC APPROVE DEPOSIT ---
+  // --- 4. LOGIC APPROVE DEPOSIT (JUGA DIPERBAIKI READ-BEFORE-WRITE) ---
   const handleApproveDeposit = async (req: any) => {
-    if (!confirm(`Terima Deposit Rp ${req.total_transfer.toLocaleString()}?\n(Bonus Referral Deposit akan otomatis dibagikan)`)) return;
+    if (!confirm(`Terima Deposit Rp ${req.total_transfer.toLocaleString()}?`)) return;
     setProcessingId(req.id);
 
     try {
       await runTransaction(db, async (transaction) => {
-        // Data User
+        // 1. READ SEMUA DULU
         const userRef = doc(db, "users", req.user_uid);
         const userDoc = await transaction.get(userRef);
         if (!userDoc.exists()) throw "User tidak ditemukan!";
         const userData = userDoc.data();
 
-        // Data Upline
         const u1Id = userData.network?.upline_1;
         const u2Id = userData.network?.upline_2;
         const u3Id = userData.network?.upline_3;
 
-        let u1Ref, u2Ref, u3Ref, u1Doc, u2Doc, u3Doc;
-        if (u1Id) { u1Ref = doc(db, "users", u1Id); u1Doc = await transaction.get(u1Ref); }
-        if (u2Id) { u2Ref = doc(db, "users", u2Id); u2Doc = await transaction.get(u2Ref); }
-        if (u3Id) { u3Ref = doc(db, "users", u3Id); u3Doc = await transaction.get(u3Ref); }
+        let u1Doc, u2Doc, u3Doc;
+        if (u1Id) { u1Doc = await transaction.get(doc(db, "users", u1Id)); }
+        if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
+        if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
 
-        const calculateNewBalance = (docData: any, bonusAmount: number = 0) => {
-            const oldSaldo = docData.finance?.saldo_utama || 0;
-            return oldSaldo + bonusAmount;
-        };
+        // 2. BARU WRITE SETELAH SEMUA READ SELESAI
+        const timestamp = new Date().toISOString();
+        const base = req.amount_base || req.total_transfer;
 
         // Update Saldo User
-        const newSaldoUser = calculateNewBalance(userData, req.total_transfer);
+        const newSaldoUser = (userData.finance?.saldo_utama || 0) + req.total_transfer;
         transaction.update(userRef, { "finance.saldo_utama": newSaldoUser });
 
-        // Bagi Bonus Referral DEPOSIT (Sekali di awal)
-        const base = req.amount_base || req.total_transfer;
-        const timestamp = new Date().toISOString();
-
+        // Update Upline 1
         if (u1Doc && u1Doc.exists()) {
-            const bonus = base * 0.05; // 5% dari Deposit
-            const newSaldo = calculateNewBalance(u1Doc.data(), bonus);
-            transaction.update(u1Ref!, { "finance.saldo_utama": newSaldo });
-            const bonusRef = doc(collection(db, "bonuses"));
-            transaction.set(bonusRef, { uid: u1Id, from_nama: userData.profile.nama, level: 1, amount: bonus, created_at: timestamp, type: "REFERRAL" });
+            const bonus = base * 0.05;
+            const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
+            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
+            transaction.set(doc(collection(db, "bonuses")), { uid: u1Id, from_nama: userData.profile.nama, level: 1, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
+        // Update Upline 2
         if (u2Doc && u2Doc.exists()) {
-            const bonus = base * 0.03; // 3% dari Deposit
-            const newSaldo = calculateNewBalance(u2Doc.data(), bonus);
-            transaction.update(u2Ref!, { "finance.saldo_utama": newSaldo });
-            const bonusRef = doc(collection(db, "bonuses"));
-            transaction.set(bonusRef, { uid: u2Id, from_nama: userData.profile.nama, level: 2, amount: bonus, created_at: timestamp, type: "REFERRAL" });
+            const bonus = base * 0.03;
+            const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
+            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
+            transaction.set(doc(collection(db, "bonuses")), { uid: u2Id, from_nama: userData.profile.nama, level: 2, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
+        // Update Upline 3
         if (u3Doc && u3Doc.exists()) {
-            const bonus = base * 0.01; // 1% dari Deposit
-            const newSaldo = calculateNewBalance(u3Doc.data(), bonus);
-            transaction.update(u3Ref!, { "finance.saldo_utama": newSaldo });
-            const bonusRef = doc(collection(db, "bonuses"));
-            transaction.set(bonusRef, { uid: u3Id, from_nama: userData.profile.nama, level: 3, amount: bonus, created_at: timestamp, type: "REFERRAL" });
+            const bonus = base * 0.01;
+            const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
+            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": newSaldo });
+            transaction.set(doc(collection(db, "bonuses")), { uid: u3Id, from_nama: userData.profile.nama, level: 3, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
 
-        // Update Status
+        // Update Status Deposit
         transaction.update(doc(db, "deposits", req.id), { status: "approved", process_date: timestamp });
       });
 
@@ -235,7 +241,7 @@ export default function AdminPanel() {
     finally { setProcessingId(null); }
   };
 
-  // --- 5. LOGIC REJECT/APPROVE LAINNYA ---
+  // --- 5. LOGIC LAINNYA ---
   const handleCancelDeposit = async (id: string) => {
     if (!confirm("Tolak deposit ini?")) return;
     setProcessingId(id);
@@ -278,7 +284,6 @@ export default function AdminPanel() {
             </div>
             
             <div className="flex items-center gap-3">
-                 {/* TOMBOL SAKTI: TRIGGER HARIAN */}
                  <button 
                     onClick={handleRunDailyProfit}
                     disabled={isProfitRunning}
@@ -311,8 +316,8 @@ export default function AdminPanel() {
             </div>
         </div>
 
+        {/* LIST REQUEST */}
         <div className="grid md:grid-cols-2 gap-10">
-            {/* DEPOSIT LIST */}
             <div>
                 <h2 className="text-lg font-bold text-yellow-500 mb-4 flex items-center gap-2">
                     📥 DEPOSIT PENDING <span className="bg-yellow-900 text-yellow-100 text-[10px] px-2 py-0.5 rounded-full">{depoRequests.length}</span>
@@ -338,7 +343,6 @@ export default function AdminPanel() {
                 ))}
             </div>
 
-            {/* WD LIST */}
             <div>
                 <h2 className="text-lg font-bold text-blue-500 mb-4 flex items-center gap-2">
                     📤 WITHDRAW PENDING <span className="bg-blue-900 text-blue-100 text-[10px] px-2 py-0.5 rounded-full">{wdRequests.length}</span>
