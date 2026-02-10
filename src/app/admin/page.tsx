@@ -12,151 +12,144 @@ export default function AdminPanel() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [isProfitRunning, setIsProfitRunning] = useState(false); 
+  const [activeTab, setActiveTab] = useState<"REQUESTS" | "USERS">("REQUESTS"); // Sistem Tab Admin
   
   // Data Lists
   const [wdRequests, setWdRequests] = useState<any[]>([]);
   const [depoRequests, setDepoRequests] = useState<any[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
+  // Data Database Users Baru
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'created_at', direction: 'desc' });
+
   // Data Statistik
-  const [stats, setStats] = useState({
-    totalMember: 0,
-    totalAset: 0,
-    totalDepositSuccess: 0,
-    totalWdSuccess: 0
-  });
+  const [stats, setStats] = useState({ totalMember: 0, totalAset: 0, totalDepositSuccess: 0, totalWdSuccess: 0 });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) { alert("Login Admin Dulu!"); router.push("/login"); return; }
       if (currentUser.email !== ADMIN_EMAIL) { alert("AKSES DITOLAK! Email ini bukan Admin."); router.push("/dashboard"); return; }
       
-      await Promise.all([fetchAllRequests(), fetchStats()]);
+      await Promise.all([fetchAllRequests(), fetchStatsAndUsers()]);
       setLoading(false);
     });
     return () => unsubscribe();
   }, [router]);
 
-  // --- 1. AMBIL LIST REQUEST PENDING ---
   const fetchAllRequests = async () => {
     try {
-      const qWd = query(collection(db, "withdrawals"), where("status", "==", "pending"));
-      const snapWd = await getDocs(qWd);
+      const snapWd = await getDocs(query(collection(db, "withdrawals"), where("status", "==", "pending")));
       setWdRequests(snapWd.docs.map(d => ({ id: d.id, ...d.data() })));
 
-      const qDepo = query(collection(db, "deposits"), where("status", "==", "pending"));
-      const snapDepo = await getDocs(qDepo);
+      const snapDepo = await getDocs(query(collection(db, "deposits"), where("status", "==", "pending")));
       setDepoRequests(snapDepo.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (err) { console.error(err); }
   };
 
-  // --- 2. HITUNG STATISTIK ---
-  const fetchStats = async () => {
+  // --- MENGAMBIL STATS SEKALIGUS MENGOLAH DATA USER LIST ---
+  const fetchStatsAndUsers = async () => {
     try {
         const collUser = collection(db, "users");
         const snapUser = await getCountFromServer(collUser);
+        const allUsersSnap = await getDocs(collUser);
         
-        const allUsers = await getDocs(collUser);
         let totalSaldo = 0;
-        allUsers.forEach(doc => { totalSaldo += doc.data().finance?.saldo_utama || 0; });
+        let rawUsers: any[] = [];
 
-        const qDepoDone = query(collection(db, "deposits"), where("status", "==", "approved"));
-        const snapDepoDone = await getDocs(qDepoDone);
-        let totalIn = 0;
-        snapDepoDone.forEach(doc => { totalIn += doc.data().total_transfer || 0; });
-
-        const qWdDone = query(collection(db, "withdrawals"), where("status", "==", "success"));
-        const snapWdDone = await getDocs(qWdDone);
-        let totalOut = 0;
-        snapWdDone.forEach(doc => { totalOut += doc.data().amount || 0; }); // Hitung total kotor yg ditarik user
-
-        setStats({
-            totalMember: snapUser.data().count,
-            totalAset: totalSaldo,
-            totalDepositSuccess: totalIn,
-            totalWdSuccess: totalOut
+        // Kumpulkan data mentah
+        allUsersSnap.forEach(doc => { 
+            const data = doc.data();
+            totalSaldo += data.finance?.saldo_utama || 0; 
+            rawUsers.push({ id: doc.id, ...data });
         });
+
+        // OLAH DATA USER: Hitung downline secara LOKAL (Hemat kuota Firestore!)
+        const enrichedUsers = rawUsers.map(u => ({
+            uid: u.id,
+            nama: u.profile?.nama || "Tanpa Nama",
+            hp: u.profile?.hp || "-",
+            email: u.email || "-", // Firebase auth email mungkin ga tersimpan di profile, gpp kita siapkan
+            saldo: u.finance?.saldo_utama || 0,
+            created_at: u.created_at || "2024-01-01T00:00:00.000Z", // Fallback date
+            // Hitung manual brp org yg upline_1 nya adalah UID user ini
+            d1: rawUsers.filter(x => x.network?.upline_1 === u.id).length,
+            d2: rawUsers.filter(x => x.network?.upline_2 === u.id).length,
+            d3: rawUsers.filter(x => x.network?.upline_3 === u.id).length,
+        }));
+
+        // Default sort by Saldo Tertinggi
+        enrichedUsers.sort((a, b) => b.saldo - a.saldo);
+        setUsersList(enrichedUsers);
+
+        // Ambil data Deposit & WD Success
+        const snapDepoDone = await getDocs(query(collection(db, "deposits"), where("status", "==", "approved")));
+        let totalIn = 0; snapDepoDone.forEach(doc => { totalIn += doc.data().total_transfer || 0; });
+
+        const snapWdDone = await getDocs(query(collection(db, "withdrawals"), where("status", "==", "success")));
+        let totalOut = 0; snapWdDone.forEach(doc => { totalOut += doc.data().amount || 0; });
+
+        setStats({ totalMember: snapUser.data().count, totalAset: totalSaldo, totalDepositSuccess: totalIn, totalWdSuccess: totalOut });
 
     } catch (err) { console.error("Gagal hitung stats", err); }
   };
 
-  // --- 3. LOGIC TRIGGER PROFIT HARIAN (SUDAH DIPERBAIKI: READ BEFORE WRITE) ---
+  // --- LOGIC SORTIR TABEL USER ---
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') { direction = 'desc'; }
+    
+    const sortedData = [...usersList].sort((a, b) => {
+        if (a[key] < b[key]) return direction === 'asc' ? -1 : 1;
+        if (a[key] > b[key]) return direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+    setUsersList(sortedData);
+    setSortConfig({ key, direction });
+  };
+
+
   const handleRunDailyProfit = async () => {
     if (!confirm("⚠️ PERINGATAN KERAS!\n\nApakah Anda yakin ingin menjalankan PROFIT HARIAN sekarang?\n\nKlik OK untuk melanjutkan.")) return;
-    
     setIsProfitRunning(true);
     let processedCount = 0;
-
     try {
         const allUsersSnap = await getDocs(collection(db, "users"));
         const timestamp = new Date().toISOString();
-
         for (const userDoc of allUsersSnap.docs) {
             const uData = userDoc.data();
             const currentSaldo = uData.finance?.saldo_utama || 0;
-
             if (currentSaldo >= 50000) {
-                
                 await runTransaction(db, async (transaction) => {
-                    // --- TAHAP 1: BACA SEMUA DATA DULU (READ) ---
-                    const u1Id = uData.network?.upline_1;
-                    const u2Id = uData.network?.upline_2;
-                    const u3Id = uData.network?.upline_3;
-
+                    const u1Id = uData.network?.upline_1; const u2Id = uData.network?.upline_2; const u3Id = uData.network?.upline_3;
                     let u1Doc, u2Doc, u3Doc;
-                    
-                    if (u1Id) { u1Doc = await transaction.get(doc(db, "users", u1Id)); }
-                    if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
-                    if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
+                    if (u1Id) u1Doc = await transaction.get(doc(db, "users", u1Id));
+                    if (u2Id) u2Doc = await transaction.get(doc(db, "users", u2Id));
+                    if (u3Id) u3Doc = await transaction.get(doc(db, "users", u3Id));
 
-                    // --- TAHAP 2: KALKULASI & TULIS DATA (WRITE) ---
-                    
-                    // A. Update User Sendiri
                     const profitHarian = Math.floor(currentSaldo * 0.0035); 
-                    transaction.update(doc(db, "users", userDoc.id), {
-                        "finance.saldo_utama": currentSaldo + profitHarian,
-                        "finance.last_profit_calc": timestamp
-                    });
+                    transaction.update(doc(db, "users", userDoc.id), { "finance.saldo_utama": currentSaldo + profitHarian, "finance.last_profit_calc": timestamp });
+                    transaction.set(doc(collection(db, "profit_logs")), { uid: userDoc.id, amount: profitHarian, created_at: timestamp, desc: "Profit Mining Harian" });
 
-                    const logRef = doc(collection(db, "profit_logs"));
-                    transaction.set(logRef, {
-                        uid: userDoc.id,
-                        amount: profitHarian,
-                        created_at: timestamp,
-                        desc: "Profit Mining Harian"
-                    });
-
-                    // B. Update Upline (Jika ada datanya)
                     if (u1Doc && u1Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.10); // 10%
+                        const bonus = Math.floor(profitHarian * 0.10);
                         if (bonus > 0) {
-                            const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
-                            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
-                            transaction.set(doc(collection(db, "bonuses")), {
-                                uid: u1Id, amount: bonus, from_nama: uData.profile.nama, level: 1, created_at: timestamp, type: "PASSIVE"
-                            });
+                            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": (u1Doc.data().finance?.saldo_utama || 0) + bonus });
+                            transaction.set(doc(collection(db, "bonuses")), { uid: u1Id, amount: bonus, from_nama: uData.profile.nama, level: 1, created_at: timestamp, type: "PASSIVE" });
                         }
                     }
-
                     if (u2Doc && u2Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.05); // 5%
+                        const bonus = Math.floor(profitHarian * 0.05);
                         if (bonus > 0) {
-                            const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
-                            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
-                            transaction.set(doc(collection(db, "bonuses")), {
-                                uid: u2Id, amount: bonus, from_nama: uData.profile.nama, level: 2, created_at: timestamp, type: "PASSIVE"
-                            });
+                            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": (u2Doc.data().finance?.saldo_utama || 0) + bonus });
+                            transaction.set(doc(collection(db, "bonuses")), { uid: u2Id, amount: bonus, from_nama: uData.profile.nama, level: 2, created_at: timestamp, type: "PASSIVE" });
                         }
                     }
-
                     if (u3Doc && u3Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.02); // 2%
+                        const bonus = Math.floor(profitHarian * 0.02);
                         if (bonus > 0) {
-                            const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
-                            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": newSaldo });
-                            transaction.set(doc(collection(db, "bonuses")), {
-                                uid: u3Id, amount: bonus, from_nama: uData.profile.nama, level: 3, created_at: timestamp, type: "PASSIVE"
-                            });
+                            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": (u3Doc.data().finance?.saldo_utama || 0) + bonus });
+                            transaction.set(doc(collection(db, "bonuses")), { uid: u3Id, amount: bonus, from_nama: uData.profile.nama, level: 3, created_at: timestamp, type: "PASSIVE" });
                         }
                     }
                 });
@@ -164,71 +157,48 @@ export default function AdminPanel() {
             }
         }
         alert(`✅ SUKSES! Profit dibagikan ke ${processedCount} member.`);
-        fetchStats(); 
-    } catch (e:any) {
-        console.error(e);
-        alert("Gagal: " + e.message);
-    } finally {
-        setIsProfitRunning(false);
-    }
+        fetchStatsAndUsers(); 
+    } catch (e:any) { alert("Gagal: " + e.message); } finally { setIsProfitRunning(false); }
   };
 
-
-  // --- 4. LOGIC APPROVE DEPOSIT (READ-BEFORE-WRITE) ---
   const handleApproveDeposit = async (req: any) => {
     if (!confirm(`Terima Deposit Rp ${req.total_transfer.toLocaleString()}?`)) return;
     setProcessingId(req.id);
-
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. READ SEMUA DULU
         const userRef = doc(db, "users", req.user_uid);
         const userDoc = await transaction.get(userRef);
         if (!userDoc.exists()) throw "User tidak ditemukan!";
         const userData = userDoc.data();
-
-        const u1Id = userData.network?.upline_1;
-        const u2Id = userData.network?.upline_2;
-        const u3Id = userData.network?.upline_3;
-
+        const u1Id = userData.network?.upline_1; const u2Id = userData.network?.upline_2; const u3Id = userData.network?.upline_3;
         let u1Doc, u2Doc, u3Doc;
-        if (u1Id) { u1Doc = await transaction.get(doc(db, "users", u1Id)); }
-        if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
-        if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
+        if (u1Id) u1Doc = await transaction.get(doc(db, "users", u1Id));
+        if (u2Id) u2Doc = await transaction.get(doc(db, "users", u2Id));
+        if (u3Id) u3Doc = await transaction.get(doc(db, "users", u3Id));
 
-        // 2. BARU WRITE
         const timestamp = new Date().toISOString();
         const base = req.amount_base || req.total_transfer;
-
-        const newSaldoUser = (userData.finance?.saldo_utama || 0) + req.total_transfer;
-        transaction.update(userRef, { "finance.saldo_utama": newSaldoUser });
+        transaction.update(userRef, { "finance.saldo_utama": (userData.finance?.saldo_utama || 0) + req.total_transfer });
 
         if (u1Doc && u1Doc.exists()) {
             const bonus = base * 0.05;
-            const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
-            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
+            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": (u1Doc.data().finance?.saldo_utama || 0) + bonus });
             transaction.set(doc(collection(db, "bonuses")), { uid: u1Id, from_nama: userData.profile.nama, level: 1, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
         if (u2Doc && u2Doc.exists()) {
             const bonus = base * 0.03;
-            const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
-            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
+            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": (u2Doc.data().finance?.saldo_utama || 0) + bonus });
             transaction.set(doc(collection(db, "bonuses")), { uid: u2Id, from_nama: userData.profile.nama, level: 2, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
         if (u3Doc && u3Doc.exists()) {
             const bonus = base * 0.01;
-            const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
-            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": newSaldo });
+            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": (u3Doc.data().finance?.saldo_utama || 0) + bonus });
             transaction.set(doc(collection(db, "bonuses")), { uid: u3Id, from_nama: userData.profile.nama, level: 3, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
-
         transaction.update(doc(db, "deposits", req.id), { status: "approved", process_date: timestamp });
       });
-
-      alert("✅ Deposit Diterima & Bonus Terkirim.");
-      fetchAllRequests(); fetchStats();
-    } catch (e: any) { alert("Error: " + e.message); } 
-    finally { setProcessingId(null); }
+      alert("✅ Deposit Diterima & Bonus Terkirim."); fetchAllRequests(); fetchStatsAndUsers();
+    } catch (e: any) { alert("Error: " + e.message); } finally { setProcessingId(null); }
   };
 
   const handleCancelDeposit = async (id: string) => {
@@ -237,26 +207,20 @@ export default function AdminPanel() {
     try { await updateDoc(doc(db, "deposits", id), { status: "rejected" }); fetchAllRequests(); } catch (e) { alert("Gagal."); } finally { setProcessingId(null); }
   };
 
-  // --- 5. LOGIC APPROVE WD (DIPERBAIKI DENGAN NET AMOUNT) ---
   const handleApproveWD = async (req: any) => {
-    // Tampilkan konfirmasi yg jelas ke Admin
     const transferBersih = req.net_amount || req.amount; 
     if (!confirm(`Setujui WD dari ${req.user_nama}?\n\nSaldo Terpotong: ${formatIDR(req.amount)}\nTransfer Bersih: ${formatIDR(transferBersih)}\n\nLanjutkan?`)) return;
-    
     setProcessingId(req.id);
     try {
       await runTransaction(db, async (transaction) => {
         const userRef = doc(db, "users", req.user_uid);
         const userDoc = await transaction.get(userRef);
         const currentSaldo = userDoc.data()?.finance.saldo_utama || 0;
-        
-        if (currentSaldo < req.amount) throw "Saldo Kurang! (Mungkin user sudah menarik dana lain)";
-        
-        // Saldo user TETAP dipotong harga kotor (gross amount)
+        if (currentSaldo < req.amount) throw "Saldo Kurang!";
         transaction.update(userRef, { "finance.saldo_utama": currentSaldo - req.amount });
         transaction.update(doc(db, "withdrawals", req.id), { status: "success" });
       });
-      alert("✅ WD Sukses! Silakan transfer ke rekening user."); fetchAllRequests(); fetchStats();
+      alert("✅ WD Sukses!"); fetchAllRequests(); fetchStatsAndUsers();
     } catch (e: any) { alert("Error: " + e.message); } finally { setProcessingId(null); }
   };
 
@@ -280,21 +244,16 @@ export default function AdminPanel() {
                 <h1 className="text-3xl font-black text-red-600 tracking-tighter">GOD MODE <span className="text-white">PANEL</span></h1>
                 <p className="text-xs text-gray-500">Master Saving Administration</p>
             </div>
-            
             <div className="flex items-center gap-3">
-                 <button 
-                    onClick={handleRunDailyProfit}
-                    disabled={isProfitRunning}
-                    className={`px-6 py-2 rounded font-bold shadow-[0_0_15px_rgba(34,197,94,0.5)] transition ${isProfitRunning ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 animate-pulse'}`}
-                >
+                 <button onClick={handleRunDailyProfit} disabled={isProfitRunning} className={`px-6 py-2 rounded font-bold shadow-[0_0_15px_rgba(34,197,94,0.5)] transition ${isProfitRunning ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 animate-pulse'}`}>
                     {isProfitRunning ? "⏳ SEDANG MEMPROSES..." : "⚡ JALANKAN PROFIT HARIAN"}
                 </button>
                 <button onClick={() => router.push('/dashboard')} className="px-4 py-2 border border-gray-700 hover:bg-gray-800 rounded text-xs transition">Back to App</button>
             </div>
         </div>
 
-        {/* --- STATISTIK CARDS --- */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+        {/* STATISTIK CARDS */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <div className="bg-[#111] p-4 rounded-xl border border-gray-800">
                 <p className="text-xs text-gray-500 mb-1">TOTAL MEMBER</p>
                 <h3 className="text-2xl font-bold text-white">{stats.totalMember.toLocaleString()} <span className="text-xs text-gray-600">User</span></h3>
@@ -314,67 +273,96 @@ export default function AdminPanel() {
             </div>
         </div>
 
-        {/* LIST REQUEST */}
-        <div className="grid md:grid-cols-2 gap-10">
-            {/* DEPOSIT */}
-            <div>
-                <h2 className="text-lg font-bold text-yellow-500 mb-4 flex items-center gap-2">
-                    📥 DEPOSIT PENDING <span className="bg-yellow-900 text-yellow-100 text-[10px] px-2 py-0.5 rounded-full">{depoRequests.length}</span>
-                </h2>
-                {depoRequests.length === 0 ? <p className="text-gray-600 text-xs italic">Aman, tidak ada antrian.</p> : 
-                 depoRequests.map(req => (
-                    <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3">
-                        <div className="flex justify-between">
-                            <div>
-                                <div className="font-bold text-sm">{req.user_nama}</div>
-                                <div className="text-xs text-gray-500">ID: ...{req.user_uid.slice(-4)}</div>
-                            </div>
-                            <div className="text-right">
-                                <div className="text-sm font-bold text-yellow-400">{formatIDR(req.total_transfer)}</div>
-                                <div className="text-[10px] text-gray-500">Kode: {req.unique_code}</div>
-                            </div>
-                        </div>
-                        <div className="flex gap-2 pt-2 border-t border-gray-800">
-                            <button disabled={!!processingId} onClick={() => handleCancelDeposit(req.id)} className="flex-1 py-2 border border-red-900/50 text-red-500 text-xs rounded hover:bg-red-900/10">TOLAK</button>
-                            <button disabled={!!processingId} onClick={() => handleApproveDeposit(req)} className="flex-1 py-2 bg-yellow-600 text-black font-bold text-xs rounded hover:bg-yellow-500 shadow-lg shadow-yellow-900/20">TERIMA & BONUS</button>
-                        </div>
-                    </div>
-                ))}
-            </div>
-
-            {/* WITHDRAW WITH FEE LOGIC */}
-            <div>
-                <h2 className="text-lg font-bold text-blue-500 mb-4 flex items-center gap-2">
-                    📤 WITHDRAW PENDING <span className="bg-blue-900 text-blue-100 text-[10px] px-2 py-0.5 rounded-full">{wdRequests.length}</span>
-                </h2>
-                {wdRequests.length === 0 ? <p className="text-gray-600 text-xs italic">Aman, tidak ada antrian.</p> :
-                 wdRequests.map(req => (
-                    <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3 relative overflow-hidden">
-                        
-                        {/* LABEL POTONGAN SALDO DI POJOK */}
-                        <div className="absolute top-0 right-0 bg-red-900/50 text-red-200 text-[9px] px-3 py-1 rounded-bl-lg font-bold">
-                            Potong Saldo: {formatIDR(req.amount)}
-                        </div>
-
-                        <div className="flex justify-between mt-4">
-                            <div>
-                                <div className="font-bold text-sm">{req.user_nama}</div>
-                                <div className="text-[10px] text-cyan-400 bg-cyan-900/20 px-2 py-0.5 rounded border border-cyan-800 inline-block mt-1">{req.ewallet}</div>
-                            </div>
-                            <div className="text-right">
-                                <div className="text-[10px] text-gray-500 mb-1">Transfer Bersih (Net):</div>
-                                {/* Gunakan net_amount jika ada, kalau data lama tetap pakai amount */}
-                                <div className="text-xl font-black text-green-400">{formatIDR(req.net_amount || req.amount)}</div>
-                            </div>
-                        </div>
-                        <div className="flex gap-2 pt-2 border-t border-gray-800">
-                            <button disabled={!!processingId} onClick={() => handleRejectWD(req.id)} className="flex-1 py-2 border border-gray-600 text-gray-400 text-xs rounded hover:bg-gray-800">BATAL</button>
-                            <button disabled={!!processingId} onClick={() => handleApproveWD(req)} className="flex-1 py-2 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-500 shadow-lg shadow-blue-900/20">APPROVE</button>
-                        </div>
-                    </div>
-                ))}
-            </div>
+        {/* TABS NAVIGATION */}
+        <div className="flex gap-4 mb-6 border-b border-gray-800">
+            <button onClick={() => setActiveTab("REQUESTS")} className={`pb-2 font-bold px-4 ${activeTab === "REQUESTS" ? "text-yellow-500 border-b-2 border-yellow-500" : "text-gray-500 hover:text-white"}`}>TRANSAKSI & ANTRIAN</button>
+            <button onClick={() => setActiveTab("USERS")} className={`pb-2 font-bold px-4 ${activeTab === "USERS" ? "text-blue-500 border-b-2 border-blue-500" : "text-gray-500 hover:text-white"}`}>DATABASE USERS</button>
         </div>
+
+        {/* TAB 1: REQUESTS (DEPO & WD) */}
+        {activeTab === "REQUESTS" && (
+            <div className="grid md:grid-cols-2 gap-10">
+                <div>
+                    <h2 className="text-lg font-bold text-yellow-500 mb-4">📥 DEPOSIT PENDING ({depoRequests.length})</h2>
+                    {depoRequests.length === 0 ? <p className="text-gray-600 text-xs italic">Tidak ada antrian.</p> : 
+                     depoRequests.map(req => (
+                        <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3">
+                            <div className="flex justify-between">
+                                <div><div className="font-bold text-sm">{req.user_nama}</div><div className="text-xs text-gray-500">ID: ...{req.user_uid.slice(-4)}</div></div>
+                                <div className="text-right"><div className="text-sm font-bold text-yellow-400">{formatIDR(req.total_transfer)}</div></div>
+                            </div>
+                            <div className="flex gap-2 pt-2 border-t border-gray-800">
+                                <button disabled={!!processingId} onClick={() => handleCancelDeposit(req.id)} className="flex-1 py-2 border border-red-900/50 text-red-500 text-xs rounded hover:bg-red-900/10">TOLAK</button>
+                                <button disabled={!!processingId} onClick={() => handleApproveDeposit(req)} className="flex-1 py-2 bg-yellow-600 text-black font-bold text-xs rounded hover:bg-yellow-500">TERIMA & BONUS</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <div>
+                    <h2 className="text-lg font-bold text-blue-500 mb-4">📤 WITHDRAW PENDING ({wdRequests.length})</h2>
+                    {wdRequests.length === 0 ? <p className="text-gray-600 text-xs italic">Tidak ada antrian.</p> :
+                     wdRequests.map(req => (
+                        <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3 relative">
+                            <div className="absolute top-0 right-0 bg-red-900/50 text-red-200 text-[9px] px-3 py-1 rounded-bl-lg font-bold">Potong: {formatIDR(req.amount)}</div>
+                            <div className="flex justify-between mt-4">
+                                <div><div className="font-bold text-sm">{req.user_nama}</div><div className="text-[10px] text-cyan-400 mt-1">{req.ewallet}</div></div>
+                                <div className="text-right"><div className="text-[10px] text-gray-500 mb-1">Netto (Transfer):</div><div className="text-xl font-black text-green-400">{formatIDR(req.net_amount || req.amount)}</div></div>
+                            </div>
+                            <div className="flex gap-2 pt-2 border-t border-gray-800">
+                                <button disabled={!!processingId} onClick={() => handleRejectWD(req.id)} className="flex-1 py-2 border border-gray-600 text-gray-400 text-xs rounded hover:bg-gray-800">BATAL</button>
+                                <button disabled={!!processingId} onClick={() => handleApproveWD(req)} className="flex-1 py-2 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-500">APPROVE</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
+        {/* TAB 2: DATABASE USERS LENGKAP */}
+        {activeTab === "USERS" && (
+            <div className="bg-[#111] border border-gray-800 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-[#1a1a1a] text-gray-400 text-xs">
+                            <tr>
+                                <th className="p-4 cursor-pointer hover:text-white" onClick={() => handleSort('nama')}>NAMA {sortConfig.key==='nama' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
+                                <th className="p-4 cursor-pointer hover:text-white" onClick={() => handleSort('hp')}>KONTAK {sortConfig.key==='hp' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
+                                <th className="p-4 cursor-pointer hover:text-white text-right" onClick={() => handleSort('saldo')}>SALDO (ASET) {sortConfig.key==='saldo' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
+                                <th className="p-4 text-center cursor-pointer hover:text-white" onClick={() => handleSort('d1')}>TIM (LVL 1|2|3)</th>
+                                <th className="p-4 cursor-pointer hover:text-white" onClick={() => handleSort('created_at')}>TGL DAFTAR {sortConfig.key==='created_at' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-800 text-gray-300">
+                            {usersList.map((user, idx) => (
+                                <tr key={user.uid} className="hover:bg-[#151515] transition">
+                                    <td className="p-4">
+                                        <div className="font-bold text-white">{user.nama}</div>
+                                        <div className="text-[10px] text-gray-600 font-mono">{user.uid.slice(0, 8)}...</div>
+                                    </td>
+                                    <td className="p-4">
+                                        <div>{user.hp}</div>
+                                        <div className="text-[10px] text-gray-500">{user.email}</div>
+                                    </td>
+                                    <td className="p-4 text-right font-bold text-yellow-500">
+                                        {formatIDR(user.saldo)}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <div className="flex justify-center gap-1 text-[10px]">
+                                            <span className="bg-yellow-900/30 text-yellow-500 px-2 py-1 rounded" title="Level 1">{user.d1}</span>
+                                            <span className="bg-blue-900/30 text-blue-400 px-2 py-1 rounded" title="Level 2">{user.d2}</span>
+                                            <span className="bg-purple-900/30 text-purple-400 px-2 py-1 rounded" title="Level 3">{user.d3}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-xs text-gray-500">
+                                        {new Date(user.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        )}
 
       </div>
     </div>
