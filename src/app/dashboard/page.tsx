@@ -9,7 +9,6 @@ import { useRouter } from "next/navigation";
 const TELEGRAM_BOT_TOKEN = "8487855373:AAEZ8Al7Su6BzqCECCuF7iRgULk1bBS7Ly0"; 
 const TELEGRAM_CHAT_ID = "788284460"; 
 
-// --- FALLBACK DATA (Jika API Error/Limit) ---
 const FALLBACK_CRYPTO = [
   { pair: "BTC", price: 1520000000, change: 2.5 },
   { pair: "ETH", price: 42000000, change: -1.2 },
@@ -38,31 +37,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [liveSaldo, setLiveSaldo] = useState<number>(0);
   
-  // Data Market Real
   const [cryptoData, setCryptoData] = useState<any[]>(FALLBACK_CRYPTO);
   const [forexData, setForexData] = useState<any[]>(FALLBACK_FOREX);
 
-  // State Modal & Form
   const [activeModal, setActiveModal] = useState<"WD" | "NETWORK" | "DEPOSIT_PAYMENT" | null>(null);
   const [wdAmount, setWdAmount] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // State Deposit
   const [depoAmount, setDepoAmount] = useState("");
   const [uniqueCode, setUniqueCode] = useState(0);
   const [proofFile, setProofFile] = useState<File | null>(null);
 
-  // State Network
   const [downlines, setDownlines] = useState<{lvl1: string[], lvl2: string[], lvl3: string[]}>({ lvl1: [], lvl2: [], lvl3: [] });
 
-  // 1. FETCH REAL MARKET DATA (NEW FEATURE)
   useEffect(() => {
     const fetchMarketData = async () => {
         try {
-            // A. Fetch Crypto (CoinGecko Free API)
             const resCrypto = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple&vs_currencies=idr&include_24hr_change=true");
             const dataCrypto = await resCrypto.json();
-            
             if(dataCrypto.bitcoin) {
                 setCryptoData([
                     { pair: "BTC", price: dataCrypto.bitcoin.idr, change: dataCrypto.bitcoin.idr_24h_change },
@@ -72,31 +64,23 @@ export default function Dashboard() {
                     { pair: "XRP", price: dataCrypto.ripple.idr, change: dataCrypto.ripple.idr_24h_change },
                 ]);
             }
-
-            // B. Fetch Forex (Open Exchange Rates Free)
             const resForex = await fetch("https://open.er-api.com/v6/latest/USD");
             const dataForex = await resForex.json();
-            
             if(dataForex.rates) {
                 const IDR = dataForex.rates.IDR;
                 setForexData([
-                    { pair: "USD", price: IDR, change: 0.15 }, // Change dummy karena API free jarang kasih % change
+                    { pair: "USD", price: IDR, change: 0.15 },
                     { pair: "SGD", price: IDR / dataForex.rates.SGD, change: 0.1 },
                     { pair: "EUR", price: IDR / dataForex.rates.EUR, change: -0.2 },
                     { pair: "MYR", price: IDR / dataForex.rates.MYR, change: 0.05 },
                     { pair: "JPY", price: IDR / dataForex.rates.JPY, change: -0.1 },
                 ]);
             }
-
-        } catch (e) {
-            console.log("Gagal fetch market data, pakai fallback.");
-        }
+        } catch (e) { console.log("Gagal fetch market data."); }
     };
-    
     fetchMarketData();
   }, []);
 
-  // 2. LISTENER REALTIME
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) { router.push("/login"); return; }
@@ -118,7 +102,6 @@ export default function Dashboard() {
     return () => unsubscribeAuth();
   }, [router]);
 
-  // 3. MINING EFFECT
   useEffect(() => {
     if (!userData || userData.finance.saldo_utama <= 0) return;
     const profitPerSec = (userData.finance.saldo_utama * 0.025) / 604800;
@@ -126,13 +109,11 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [userData]);
 
-  // 4. CODE GENERATOR
   useEffect(() => {
     if (depoAmount && parseInt(depoAmount) >= 10000) { setUniqueCode(Math.floor(Math.random() * 899) + 100); } 
     else { setUniqueCode(0); }
   }, [depoAmount]);
 
-  // --- ACTIONS ---
   const openDepositModal = (e: React.FormEvent) => {
     e.preventDefault();
     if (parseInt(depoAmount) < 10000 || !depoAmount) { alert("Minimal Rp 10.000"); return; }
@@ -158,18 +139,26 @@ export default function Dashboard() {
     } catch (err) { alert("Gagal."); } finally { setIsSubmitting(false); }
   };
 
+  // --- LOGIC WD BARU DENGAN FEE 5% ---
   const handleWithdraw = async () => {
     if (!userData) return;
     const amount = parseInt(wdAmount);
     if (amount > liveSaldo) { alert("Saldo Kurang!"); return; }
     if (amount < 50000) { alert("Min WD 50.000"); return; }
+    
+    // Kalkulasi Fee 5%
+    const fee = amount * 0.05;
+    const netAmount = amount - fee;
+
     const bankInfo = userData.profile.bank_name ? `${userData.profile.bank_name} - ${userData.profile.rek_number} a.n ${userData.profile.rek_name}` : userData.profile.hp; 
     setIsSubmitting(true);
     try {
       await addDoc(collection(db, "withdrawals"), {
         user_uid: auth.currentUser?.uid,
         user_nama: userData.profile.nama,
-        amount: amount,
+        amount: amount,          // Total yang dipotong dari saldo user
+        fee: fee,                // Keuntungan admin
+        net_amount: netAmount,   // Yang harus admin transfer ke user
         ewallet: bankInfo, 
         status: "pending",
         created_at: new Date().toISOString(),
@@ -196,11 +185,15 @@ export default function Dashboard() {
   const formatLive = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 2 }).format(n);
   const formatSmallIDR = (n: number) => new Intl.NumberFormat("id-ID").format(Math.floor(n));
 
+  // State turunan WD Modal
+  const currentWdValue = parseInt(wdAmount) || 0;
+  const wdFee = currentWdValue * 0.05;
+  const wdNet = currentWdValue - wdFee;
+
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-yellow-500 animate-pulse">CONNECTING...</div>;
 
   return (
     <div className="min-h-screen bg-[#050505] text-white pb-20 font-sans">
-      {/* KEYFRAMES FOR VERTICAL SCROLL */}
       <style jsx global>{`
         @keyframes scrollUp { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
         .animate-vertical { animation: scrollUp 15s linear infinite; }
@@ -222,67 +215,40 @@ export default function Dashboard() {
           <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">Total Assets</p>
           <h1 className="text-3xl font-bold text-white tabular-nums">{formatLive(liveSaldo)}</h1>
           <div className="mt-4 pt-4 border-t border-white/5 flex justify-between text-xs text-gray-500">
-             <span>Profit: <span className="text-green-400">+2.5% / Week</span></span>
+             <span>Profit: <span className="text-green-400">+0.35% / Day</span></span>
              <span>Base: {formatIDR(userData?.finance.saldo_utama || 0)}</span>
           </div>
         </div>
 
-        {/* --- PAPAN BURSA REALTIME (VERTIKAL SPLIT) --- */}
+        {/* PAPAN BURSA */}
         <div className="grid grid-cols-2 gap-3 h-40">
-            
-            {/* KOLOM KIRI: VALUTA ASING (FOREX) */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-lg overflow-hidden relative">
-                <div className="bg-[#151515] p-2 text-[9px] text-gray-500 font-bold text-center border-b border-white/5 uppercase tracking-wider">
-                    KURS IDR (LIVE)
-                </div>
+                <div className="bg-[#151515] p-2 text-[9px] text-gray-500 font-bold text-center border-b border-white/5 uppercase tracking-wider">KURS IDR (LIVE)</div>
                 <div className="h-full overflow-hidden relative">
                     <div className="animate-vertical absolute w-full px-3">
-                        {/* Data Diduplikasi agar looping mulus */}
                         {[...forexData, ...forexData].map((m, i) => (
                             <div key={i} className="flex justify-between items-center py-2 border-b border-white/5">
-                                <div>
-                                    <div className="text-[10px] font-bold text-white">{m.pair}/IDR</div>
-                                    <div className="text-[9px] text-gray-500">Forex</div>
-                                </div>
-                                <div className="text-right">
-                                    <div className="text-[10px] font-mono text-yellow-500">{formatSmallIDR(m.price)}</div>
-                                    <div className={`text-[9px] ${m.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                        {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change)}%
-                                    </div>
-                                </div>
+                                <div><div className="text-[10px] font-bold text-white">{m.pair}/IDR</div><div className="text-[9px] text-gray-500">Forex</div></div>
+                                <div className="text-right"><div className="text-[10px] font-mono text-yellow-500">{formatSmallIDR(m.price)}</div><div className={`text-[9px] ${m.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>{m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change)}%</div></div>
                             </div>
                         ))}
                     </div>
                 </div>
             </div>
-
-            {/* KOLOM KANAN: CRYPTO MARKET */}
             <div className="bg-[#0a0a0a] border border-white/5 rounded-lg overflow-hidden relative">
-                <div className="bg-[#151515] p-2 text-[9px] text-gray-500 font-bold text-center border-b border-white/5 uppercase tracking-wider">
-                    CRYPTO MARKET
-                </div>
+                <div className="bg-[#151515] p-2 text-[9px] text-gray-500 font-bold text-center border-b border-white/5 uppercase tracking-wider">CRYPTO MARKET</div>
                 <div className="h-full overflow-hidden relative">
                     <div className="animate-vertical absolute w-full px-3">
                         {[...cryptoData, ...cryptoData].map((m, i) => (
                             <div key={i} className="flex justify-between items-center py-2 border-b border-white/5">
-                                <div>
-                                    <div className="text-[10px] font-bold text-white">{m.pair}</div>
-                                    <div className="text-[9px] text-gray-500">IDR</div>
-                                </div>
-                                <div className="text-right">
-                                    <div className="text-[10px] font-mono text-blue-400">{formatSmallIDR(m.price)}</div>
-                                    <div className={`text-[9px] ${m.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                        {m.change >= 0 ? '+' : ''}{m.change.toFixed(1)}%
-                                    </div>
-                                </div>
+                                <div><div className="text-[10px] font-bold text-white">{m.pair}</div><div className="text-[9px] text-gray-500">IDR</div></div>
+                                <div className="text-right"><div className="text-[10px] font-mono text-blue-400">{formatSmallIDR(m.price)}</div><div className={`text-[9px] ${m.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>{m.change >= 0 ? '+' : ''}{m.change.toFixed(1)}%</div></div>
                             </div>
                         ))}
                     </div>
                 </div>
             </div>
-
         </div>
-        {/* ---------------------------------------------- */}
 
         {/* MENU GRID */}
         <div className="grid grid-cols-4 gap-2">
@@ -332,7 +298,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MODAL WD */}
+      {/* MODAL WD (DIPERBAIKI DENGAN RINCIAN FEE) */}
       {activeModal === "WD" && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
           <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-gray-700 p-6">
@@ -343,13 +309,23 @@ export default function Dashboard() {
                     <p className="text-[10px] text-blue-400 uppercase">Akan ditransfer ke:</p>
                     <p className="text-xs font-bold text-white">{userData.profile.bank_name} - {userData.profile.rek_number}</p>
                     <p className="text-xs text-gray-400">a.n {userData.profile.rek_name}</p>
-                    <button onClick={()=>router.push("/profile")} className="text-[10px] text-yellow-500 underline mt-1">Ganti Rekening</button>
                 </div>
             ) : (
                 <p className="text-xs text-red-400 mb-4 bg-red-900/20 p-2 rounded border border-red-500/20">⚠ Anda belum atur rekening. <button onClick={()=>router.push("/profile")} className="underline font-bold">KLIK DISINI</button></p>
             )}
-            <input type="number" placeholder="Jumlah WD" value={wdAmount} onChange={e=>setWdAmount(e.target.value)} className="w-full bg-black border border-gray-700 rounded p-3 text-white mb-4" />
-            <button onClick={handleWithdraw} disabled={isSubmitting} className="w-full py-3 bg-blue-600 text-white font-bold rounded">REQUEST PAYOUT</button>
+            
+            <input type="number" placeholder="Jumlah WD (Min 50.000)" value={wdAmount} onChange={e=>setWdAmount(e.target.value)} className="w-full bg-black border border-gray-700 rounded p-3 text-white mb-2" />
+            
+            {/* TAMPILAN FEE 5% */}
+            {currentWdValue >= 50000 && (
+                <div className="bg-[#111] p-3 rounded border border-white/5 mb-4 text-xs">
+                    <div className="flex justify-between text-gray-400 mb-1"><span>Potongan Saldo:</span> <span>{formatIDR(currentWdValue)}</span></div>
+                    <div className="flex justify-between text-red-400 mb-1"><span>Biaya Sistem (5%):</span> <span>- {formatIDR(wdFee)}</span></div>
+                    <div className="flex justify-between text-green-400 font-bold pt-1 border-t border-white/10 mt-1"><span>Diterima Bersih:</span> <span>{formatIDR(wdNet)}</span></div>
+                </div>
+            )}
+
+            <button onClick={handleWithdraw} disabled={isSubmitting || currentWdValue < 50000} className={`w-full py-3 text-white font-bold rounded ${currentWdValue >= 50000 ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 cursor-not-allowed'}`}>REQUEST PAYOUT</button>
           </div>
         </div>
       )}

@@ -68,7 +68,7 @@ export default function AdminPanel() {
         const qWdDone = query(collection(db, "withdrawals"), where("status", "==", "success"));
         const snapWdDone = await getDocs(qWdDone);
         let totalOut = 0;
-        snapWdDone.forEach(doc => { totalOut += doc.data().amount || 0; });
+        snapWdDone.forEach(doc => { totalOut += doc.data().amount || 0; }); // Hitung total kotor yg ditarik user
 
         setStats({
             totalMember: snapUser.data().count,
@@ -99,14 +99,12 @@ export default function AdminPanel() {
                 
                 await runTransaction(db, async (transaction) => {
                     // --- TAHAP 1: BACA SEMUA DATA DULU (READ) ---
-                    // Siapkan referensi upline
                     const u1Id = uData.network?.upline_1;
                     const u2Id = uData.network?.upline_2;
                     const u3Id = uData.network?.upline_3;
 
                     let u1Doc, u2Doc, u3Doc;
                     
-                    // Baca data upline SEBELUM melakukan write apapun
                     if (u1Id) { u1Doc = await transaction.get(doc(db, "users", u1Id)); }
                     if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
                     if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
@@ -129,9 +127,8 @@ export default function AdminPanel() {
                     });
 
                     // B. Update Upline (Jika ada datanya)
-                    // Level 1 (10% dari Profit)
                     if (u1Doc && u1Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.10);
+                        const bonus = Math.floor(profitHarian * 0.10); // 10%
                         if (bonus > 0) {
                             const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
                             transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
@@ -141,9 +138,8 @@ export default function AdminPanel() {
                         }
                     }
 
-                    // Level 2 (5% dari Profit)
                     if (u2Doc && u2Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.05);
+                        const bonus = Math.floor(profitHarian * 0.05); // 5%
                         if (bonus > 0) {
                             const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
                             transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
@@ -153,9 +149,8 @@ export default function AdminPanel() {
                         }
                     }
 
-                    // Level 3 (2% dari Profit)
                     if (u3Doc && u3Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.02);
+                        const bonus = Math.floor(profitHarian * 0.02); // 2%
                         if (bonus > 0) {
                             const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
                             transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": newSaldo });
@@ -179,7 +174,7 @@ export default function AdminPanel() {
   };
 
 
-  // --- 4. LOGIC APPROVE DEPOSIT (JUGA DIPERBAIKI READ-BEFORE-WRITE) ---
+  // --- 4. LOGIC APPROVE DEPOSIT (READ-BEFORE-WRITE) ---
   const handleApproveDeposit = async (req: any) => {
     if (!confirm(`Terima Deposit Rp ${req.total_transfer.toLocaleString()}?`)) return;
     setProcessingId(req.id);
@@ -201,29 +196,25 @@ export default function AdminPanel() {
         if (u2Id) { u2Doc = await transaction.get(doc(db, "users", u2Id)); }
         if (u3Id) { u3Doc = await transaction.get(doc(db, "users", u3Id)); }
 
-        // 2. BARU WRITE SETELAH SEMUA READ SELESAI
+        // 2. BARU WRITE
         const timestamp = new Date().toISOString();
         const base = req.amount_base || req.total_transfer;
 
-        // Update Saldo User
         const newSaldoUser = (userData.finance?.saldo_utama || 0) + req.total_transfer;
         transaction.update(userRef, { "finance.saldo_utama": newSaldoUser });
 
-        // Update Upline 1
         if (u1Doc && u1Doc.exists()) {
             const bonus = base * 0.05;
             const newSaldo = (u1Doc.data().finance?.saldo_utama || 0) + bonus;
             transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": newSaldo });
             transaction.set(doc(collection(db, "bonuses")), { uid: u1Id, from_nama: userData.profile.nama, level: 1, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
-        // Update Upline 2
         if (u2Doc && u2Doc.exists()) {
             const bonus = base * 0.03;
             const newSaldo = (u2Doc.data().finance?.saldo_utama || 0) + bonus;
             transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": newSaldo });
             transaction.set(doc(collection(db, "bonuses")), { uid: u2Id, from_nama: userData.profile.nama, level: 2, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
-        // Update Upline 3
         if (u3Doc && u3Doc.exists()) {
             const bonus = base * 0.01;
             const newSaldo = (u3Doc.data().finance?.saldo_utama || 0) + bonus;
@@ -231,7 +222,6 @@ export default function AdminPanel() {
             transaction.set(doc(collection(db, "bonuses")), { uid: u3Id, from_nama: userData.profile.nama, level: 3, amount: bonus, created_at: timestamp, type: "REFERRAL" });
         }
 
-        // Update Status Deposit
         transaction.update(doc(db, "deposits", req.id), { status: "approved", process_date: timestamp });
       });
 
@@ -241,27 +231,35 @@ export default function AdminPanel() {
     finally { setProcessingId(null); }
   };
 
-  // --- 5. LOGIC LAINNYA ---
   const handleCancelDeposit = async (id: string) => {
     if (!confirm("Tolak deposit ini?")) return;
     setProcessingId(id);
     try { await updateDoc(doc(db, "deposits", id), { status: "rejected" }); fetchAllRequests(); } catch (e) { alert("Gagal."); } finally { setProcessingId(null); }
   };
+
+  // --- 5. LOGIC APPROVE WD (DIPERBAIKI DENGAN NET AMOUNT) ---
   const handleApproveWD = async (req: any) => {
-    if (!confirm(`Setujui WD Rp ${req.amount.toLocaleString()}?`)) return;
+    // Tampilkan konfirmasi yg jelas ke Admin
+    const transferBersih = req.net_amount || req.amount; 
+    if (!confirm(`Setujui WD dari ${req.user_nama}?\n\nSaldo Terpotong: ${formatIDR(req.amount)}\nTransfer Bersih: ${formatIDR(transferBersih)}\n\nLanjutkan?`)) return;
+    
     setProcessingId(req.id);
     try {
       await runTransaction(db, async (transaction) => {
         const userRef = doc(db, "users", req.user_uid);
         const userDoc = await transaction.get(userRef);
         const currentSaldo = userDoc.data()?.finance.saldo_utama || 0;
-        if (currentSaldo < req.amount) throw "Saldo Kurang!";
+        
+        if (currentSaldo < req.amount) throw "Saldo Kurang! (Mungkin user sudah menarik dana lain)";
+        
+        // Saldo user TETAP dipotong harga kotor (gross amount)
         transaction.update(userRef, { "finance.saldo_utama": currentSaldo - req.amount });
         transaction.update(doc(db, "withdrawals", req.id), { status: "success" });
       });
-      alert("✅ WD Sukses!"); fetchAllRequests(); fetchStats();
+      alert("✅ WD Sukses! Silakan transfer ke rekening user."); fetchAllRequests(); fetchStats();
     } catch (e: any) { alert("Error: " + e.message); } finally { setProcessingId(null); }
   };
+
   const handleRejectWD = async (id: string) => {
     if (!confirm("Tolak WD ini?")) return;
     setProcessingId(id);
@@ -318,6 +316,7 @@ export default function AdminPanel() {
 
         {/* LIST REQUEST */}
         <div className="grid md:grid-cols-2 gap-10">
+            {/* DEPOSIT */}
             <div>
                 <h2 className="text-lg font-bold text-yellow-500 mb-4 flex items-center gap-2">
                     📥 DEPOSIT PENDING <span className="bg-yellow-900 text-yellow-100 text-[10px] px-2 py-0.5 rounded-full">{depoRequests.length}</span>
@@ -343,25 +342,34 @@ export default function AdminPanel() {
                 ))}
             </div>
 
+            {/* WITHDRAW WITH FEE LOGIC */}
             <div>
                 <h2 className="text-lg font-bold text-blue-500 mb-4 flex items-center gap-2">
                     📤 WITHDRAW PENDING <span className="bg-blue-900 text-blue-100 text-[10px] px-2 py-0.5 rounded-full">{wdRequests.length}</span>
                 </h2>
                 {wdRequests.length === 0 ? <p className="text-gray-600 text-xs italic">Aman, tidak ada antrian.</p> :
                  wdRequests.map(req => (
-                    <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3">
-                        <div className="flex justify-between">
+                    <div key={req.id} className="bg-[#111] border border-gray-800 p-4 rounded-xl mb-3 flex flex-col gap-3 relative overflow-hidden">
+                        
+                        {/* LABEL POTONGAN SALDO DI POJOK */}
+                        <div className="absolute top-0 right-0 bg-red-900/50 text-red-200 text-[9px] px-3 py-1 rounded-bl-lg font-bold">
+                            Potong Saldo: {formatIDR(req.amount)}
+                        </div>
+
+                        <div className="flex justify-between mt-4">
                             <div>
                                 <div className="font-bold text-sm">{req.user_nama}</div>
                                 <div className="text-[10px] text-cyan-400 bg-cyan-900/20 px-2 py-0.5 rounded border border-cyan-800 inline-block mt-1">{req.ewallet}</div>
                             </div>
                             <div className="text-right">
-                                <div className="text-sm font-bold text-red-400">{formatIDR(req.amount)}</div>
+                                <div className="text-[10px] text-gray-500 mb-1">Transfer Bersih (Net):</div>
+                                {/* Gunakan net_amount jika ada, kalau data lama tetap pakai amount */}
+                                <div className="text-xl font-black text-green-400">{formatIDR(req.net_amount || req.amount)}</div>
                             </div>
                         </div>
                         <div className="flex gap-2 pt-2 border-t border-gray-800">
                             <button disabled={!!processingId} onClick={() => handleRejectWD(req.id)} className="flex-1 py-2 border border-gray-600 text-gray-400 text-xs rounded hover:bg-gray-800">BATAL</button>
-                            <button disabled={!!processingId} onClick={() => handleApproveWD(req)} className="flex-1 py-2 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-500 shadow-lg shadow-blue-900/20">TRANSFER SEKARANG</button>
+                            <button disabled={!!processingId} onClick={() => handleApproveWD(req)} className="flex-1 py-2 bg-blue-600 text-white font-bold text-xs rounded hover:bg-blue-500 shadow-lg shadow-blue-900/20">APPROVE</button>
                         </div>
                     </div>
                 ))}
