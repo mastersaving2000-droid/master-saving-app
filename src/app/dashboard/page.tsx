@@ -26,7 +26,7 @@ const FALLBACK_FOREX = [
 ];
 
 interface UserData {
-  profile: { nama: string; hp: string; bank_name?: string; rek_number?: string; rek_name?: string; };
+  profile: { nama: string; hp: string; bank_name?: string; rek_number?: string; rek_name?: string; email?: string; };
   finance: { saldo_utama: number; last_profit_calc: string; };
   network: { my_referral_code: string; };
 }
@@ -49,6 +49,36 @@ export default function Dashboard() {
   const [proofFile, setProofFile] = useState<File | null>(null);
 
   const [downlines, setDownlines] = useState<{lvl1: string[], lvl2: string[], lvl3: string[]}>({ lvl1: [], lvl2: [], lvl3: [] });
+
+  // --- FUNGSI NOTIFIKASI TELEGRAM WITHDRAW ---
+  const sendWithdrawNotif = async (amount: number, fee: number, net: number, bank: string) => {
+    const message = `
+📩 *REQUEST WITHDRAW BARU*
+━━━━━━━━━━━━━━━━━━━━
+👤 User: *${userData?.profile.nama || "User"}*
+💰 Gross: *Rp ${amount.toLocaleString("id-ID")}*
+✂️ Fee (5%): *Rp ${fee.toLocaleString("id-ID")}*
+💵 Net Diterima: *Rp ${net.toLocaleString("id-ID")}*
+🏦 Bank: *${bank}*
+📅 Waktu: ${new Date().toLocaleString("id-ID")}
+━━━━━━━━━━━━━━━━━━━━
+_Segera cek God Mode Panel!_
+    `.trim();
+
+    try {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text: message,
+          parse_mode: "Markdown"
+        }),
+      });
+    } catch (e) {
+      console.error("Gagal kirim Telegram", e);
+    }
+  };
 
   useEffect(() => {
     const fetchMarketData = async () => {
@@ -90,7 +120,12 @@ export default function Dashboard() {
           const data = docSnap.data() as UserData;
           setUserData(data);
           const now = new Date().getTime();
-          const lastUpdate = data.finance.last_profit_calc ? new Date(data.finance.last_profit_calc).getTime() : now;
+          // PERBAIKAN INVALID DATE: Cek validitas date string
+          const lastUpdateStr = data.finance.last_profit_calc;
+          const lastUpdate = (lastUpdateStr && !isNaN(Date.parse(lastUpdateStr))) 
+            ? new Date(lastUpdateStr).getTime() 
+            : now;
+            
           const diffSeconds = Math.max(0, (now - lastUpdate) / 1000);
           const profitPerSec = (data.finance.saldo_utama * 0.025) / 604800;
           setLiveSaldo(data.finance.saldo_utama + (profitPerSec * diffSeconds));
@@ -139,30 +174,32 @@ export default function Dashboard() {
     } catch (err) { alert("Gagal."); } finally { setIsSubmitting(false); }
   };
 
-  // --- LOGIC WD BARU DENGAN FEE 5% ---
   const handleWithdraw = async () => {
     if (!userData) return;
     const amount = parseInt(wdAmount);
     if (amount > liveSaldo) { alert("Saldo Kurang!"); return; }
     if (amount < 50000) { alert("Min WD 50.000"); return; }
     
-    // Kalkulasi Fee 5%
     const fee = amount * 0.05;
     const netAmount = amount - fee;
-
     const bankInfo = userData.profile.bank_name ? `${userData.profile.bank_name} - ${userData.profile.rek_number} a.n ${userData.profile.rek_name}` : userData.profile.hp; 
+    
     setIsSubmitting(true);
     try {
       await addDoc(collection(db, "withdrawals"), {
         user_uid: auth.currentUser?.uid,
         user_nama: userData.profile.nama,
-        amount: amount,          // Total yang dipotong dari saldo user
-        fee: fee,                // Keuntungan admin
-        net_amount: netAmount,   // Yang harus admin transfer ke user
+        amount: amount,
+        fee: fee,
+        net_amount: netAmount,
         ewallet: bankInfo, 
         status: "pending",
         created_at: new Date().toISOString(),
       });
+      
+      // KIRIM NOTIFIKASI KE TELEGRAM
+      await sendWithdrawNotif(amount, fee, netAmount, bankInfo);
+      
       alert("Request WD Terkirim!"); setActiveModal(null); setWdAmount("");
     } catch (err) { alert("Gagal WD."); } finally { setIsSubmitting(false); }
   };
@@ -185,7 +222,6 @@ export default function Dashboard() {
   const formatLive = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 2 }).format(n);
   const formatSmallIDR = (n: number) => new Intl.NumberFormat("id-ID").format(Math.floor(n));
 
-  // State turunan WD Modal
   const currentWdValue = parseInt(wdAmount) || 0;
   const wdFee = currentWdValue * 0.05;
   const wdNet = currentWdValue - wdFee;
@@ -298,7 +334,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MODAL WD (DIPERBAIKI DENGAN RINCIAN FEE) */}
+      {/* MODAL WD */}
       {activeModal === "WD" && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
           <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-gray-700 p-6">
