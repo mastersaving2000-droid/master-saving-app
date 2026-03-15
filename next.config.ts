@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "export", // INI KUNCINYA: Mengubah web jadi statis tanpa server
+  output: "export",
   images: {
-    unoptimized: true, // Wajib diaktifkan untuk web statis
+    unoptimized: true,
   },
   eslint: {
     ignoreDuringBuilds: true,
