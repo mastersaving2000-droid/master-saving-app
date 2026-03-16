@@ -40,6 +40,10 @@ export default function Dashboard() {
   const [cryptoData, setCryptoData] = useState<any[]>(FALLBACK_CRYPTO);
   const [forexData, setForexData] = useState<any[]>(FALLBACK_FOREX);
 
+  // --- STATE COUNTDOWN PROFIT ---
+  const [timeLeft, setTimeLeft] = useState("00:00:00");
+  const [progress, setProgress] = useState(0);
+
   const [activeModal, setActiveModal] = useState<"WD" | "NETWORK" | "DEPOSIT_PAYMENT" | null>(null);
   const [wdAmount, setWdAmount] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -80,9 +84,37 @@ _Segera cek God Mode Panel!_
     }
   };
 
+  // --- EFFECT COUNTDOWN PROFIT SIKLUS HARIAN ---
+  useEffect(() => {
+    const updateTimer = () => {
+      const now = new Date();
+      // Target ke jam 00:00 (tengah malam) hari berikutnya
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const diff = tomorrow.getTime() - now.getTime();
+      
+      const h = Math.floor((diff / (1000 * 60 * 60)) % 24);
+      const m = Math.floor((diff / 1000 / 60) % 60);
+      const s = Math.floor((diff / 1000) % 60);
+
+      setTimeLeft(
+        `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`
+      );
+
+      // Kalkulasi persentase bar (berapa persen hari ini sudah berlalu)
+      const totalMsInDay = 24 * 60 * 60 * 1000;
+      const passedMs = totalMsInDay - diff;
+      setProgress((passedMs / totalMsInDay) * 100);
+    };
+
+    updateTimer(); // Panggil sekali langsung
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const fetchMarketData = async () => {
         try {
+            // 1. Fetch Data Crypto
             const resCrypto = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple&vs_currencies=idr&include_24hr_change=true");
             const dataCrypto = await resCrypto.json();
             if(dataCrypto.bitcoin) {
@@ -94,6 +126,8 @@ _Segera cek God Mode Panel!_
                     { pair: "XRP", price: dataCrypto.ripple.idr, change: dataCrypto.ripple.idr_24h_change },
                 ]);
             }
+            
+            // 2. Fetch Data Forex
             const resForex = await fetch("https://open.er-api.com/v6/latest/USD");
             const dataForex = await resForex.json();
             if(dataForex.rates) {
@@ -120,7 +154,6 @@ _Segera cek God Mode Panel!_
           const data = docSnap.data() as UserData;
           setUserData(data);
           const now = new Date().getTime();
-          // PERBAIKAN INVALID DATE: Cek validitas date string
           const lastUpdateStr = data.finance.last_profit_calc;
           const lastUpdate = (lastUpdateStr && !isNaN(Date.parse(lastUpdateStr))) 
             ? new Date(lastUpdateStr).getTime() 
@@ -197,7 +230,6 @@ _Segera cek God Mode Panel!_
         created_at: new Date().toISOString(),
       });
       
-      // KIRIM NOTIFIKASI KE TELEGRAM
       await sendWithdrawNotif(amount, fee, netAmount, bankInfo);
       
       alert("Request WD Terkirim!"); setActiveModal(null); setWdAmount("");
@@ -286,6 +318,30 @@ _Segera cek God Mode Panel!_
             </div>
         </div>
 
+        {/* COUNTDOWN PROFIT CYCLE */}
+        <div className="bg-[#0a0a0a] border border-white/5 rounded-xl overflow-hidden relative p-4 shadow-[0_4px_20px_-5px_rgba(0,0,0,0.5)]">
+            <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.8)]"></div>
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Siklus Mining Harian</span>
+                </div>
+                <div className="text-sm font-mono font-bold text-green-400 bg-green-900/20 px-2.5 py-1 rounded border border-green-500/20 tabular-nums">
+                    {timeLeft}
+                </div>
+            </div>
+            
+            {/* Progress Bar Container */}
+            <div className="w-full bg-black border border-white/10 h-2 rounded-full overflow-hidden">
+                {/* Progress Bar Fill */}
+                <div 
+                    className="bg-gradient-to-r from-yellow-600 to-green-500 h-full transition-all duration-1000 ease-linear shadow-[0_0_10px_rgba(34,197,94,0.5)]"
+                    style={{ width: `${progress}%` }}
+                ></div>
+            </div>
+            
+            <p className="text-[9px] text-gray-600 mt-2 text-right italic font-medium">Profit diakumulasi real-time. Reset siklus pada 00:00.</p>
+        </div>
+
         {/* MENU GRID */}
         <div className="grid grid-cols-4 gap-2">
           <button onClick={() => setActiveModal("WD")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-blue-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
@@ -311,10 +367,29 @@ _Segera cek God Mode Panel!_
           </form>
         </div>
         
-        {/* REFERRAL */}
-        <div className="bg-[#111] p-4 rounded-xl border border-white/5 flex justify-between items-center">
-            <div><p className="text-[10px] text-gray-500">KODE REFERRAL</p><p className="font-mono text-lg text-yellow-500">{userData?.network.my_referral_code}</p></div>
-            <button onClick={() => navigator.clipboard.writeText(userData?.network.my_referral_code || "")} className="text-xs bg-gray-800 px-3 py-1 rounded">COPY</button>
+        {/* REFERRAL SECTION - AUTO LINK GENERATOR */}
+        <div className="bg-[#111] p-4 rounded-xl border border-white/5 space-y-3">
+            <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Link Referral Anda (Siap Share)</p>
+                <div className="flex bg-black border border-gray-800 rounded-lg p-3 items-center gap-3">
+                    <p className="font-mono text-[11px] text-yellow-500 truncate flex-1">
+                      {typeof window !== "undefined" 
+                        ? `${window.location.origin}/register?ref=${userData?.network.my_referral_code}` 
+                        : "Loading Link..."}
+                    </p>
+                    <button 
+                        onClick={() => {
+                            const refLink = `${window.location.origin}/register?ref=${userData?.network.my_referral_code}`;
+                            navigator.clipboard.writeText(refLink);
+                            alert("✅ Link Berhasil Di-copy! Silakan share ke calon downline.");
+                        }} 
+                        className="text-[10px] bg-yellow-600 text-black px-3 py-1.5 rounded font-bold hover:bg-yellow-500 active:scale-95 transition"
+                    >
+                        COPY
+                    </button>
+                </div>
+            </div>
+            <p className="text-[9px] text-gray-600 italic">*Calon member yang klik link ini tidak perlu mengisi kode referral lagi secara manual.*</p>
         </div>
       </main>
 

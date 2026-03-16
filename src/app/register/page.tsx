@@ -1,23 +1,42 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 // Pastikan path import ini sesuai (gunakan ../.. jika file ada di src/app/register)
 import { auth, db } from "../../lib/firebase"; 
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
+// Next.js mewajibkan komponen yang memakai useSearchParams dibungkus Suspense
 export default function Register() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center text-cyan-400">LOADING SYSTEM...</div>}>
+      <RegisterContent />
+    </Suspense>
+  );
+}
+
+function RegisterContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  
   const [formData, setFormData] = useState({
     nama: "",
     email: "",
     hp: "",
     password: "",
-    confirmPassword: "", // <--- Field baru
+    confirmPassword: "", 
     referralCode: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // --- LOGIKA AUTO-INPUT REFERRAL DARI LINK ---
+  useEffect(() => {
+    const refFromUrl = searchParams.get("ref");
+    if (refFromUrl) {
+      setFormData((prev) => ({ ...prev, referralCode: refFromUrl }));
+    }
+  }, [searchParams]);
 
   const handleChange = (e: any) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -32,7 +51,7 @@ export default function Register() {
     if (formData.password !== formData.confirmPassword) {
       setError("Password tidak sama! Harap ulangi ketik password.");
       setLoading(false);
-      return; // Berhenti di sini, jangan lanjut
+      return; 
     }
 
     if (formData.password.length < 6) {
@@ -113,9 +132,9 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-black text-white">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-black text-white font-sans">
       <div className="glass-panel p-8 rounded-xl max-w-md w-full shadow-[0_0_40px_rgba(0,243,255,0.15)] border border-gray-800 bg-gray-900/50 backdrop-blur">
-        <h2 className="text-3xl font-bold text-center mb-6 neon-text text-cyan-400">
+        <h2 className="text-3xl font-bold text-center mb-6 neon-text text-cyan-400 italic">
           SYSTEM REGISTER
         </h2>
 
@@ -128,42 +147,51 @@ export default function Register() {
         <form onSubmit={handleRegister} className="space-y-4">
           <input 
             className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="nama" placeholder="Nama Lengkap" onChange={handleChange} required 
+            name="nama" placeholder="Nama Lengkap" value={formData.nama} onChange={handleChange} required 
           />
           <input 
             className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="email" type="email" placeholder="Email" onChange={handleChange} required 
+            name="email" type="email" placeholder="Email" value={formData.email} onChange={handleChange} required 
           />
           <input 
             className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="hp" type="tel" placeholder="Nomor WA (08xxx)" onChange={handleChange} required 
+            name="hp" type="tel" placeholder="Nomor WA (08xxx)" value={formData.hp} onChange={handleChange} required 
           />
           
           <div className="grid grid-cols-2 gap-2">
             <input 
                 className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-                name="password" type="password" placeholder="Password" onChange={handleChange} required 
+                name="password" type="password" placeholder="Password" value={formData.password} onChange={handleChange} required 
             />
             <input 
                 className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-                name="confirmPassword" type="password" placeholder="Ulangi Pass" onChange={handleChange} required 
+                name="confirmPassword" type="password" placeholder="Ulangi Pass" value={formData.confirmPassword} onChange={handleChange} required 
             />
           </div>
           
           <div className="pt-2 border-t border-gray-800 mt-4">
-            <p className="text-xs text-purple-400 mb-1">KODE REFERRAL (WAJIB)</p>
-            <input 
-              className="w-full p-3 rounded border border-purple-500 bg-purple-900/10 focus:shadow-[0_0_15px_rgba(188,19,254,0.3)] outline-none text-white"
-              name="referralCode" placeholder="Masukkan Kode Upline / ADMIN" onChange={handleChange} required 
-            />
+            <p className="text-xs text-purple-400 mb-1 font-bold">KODE REFERRAL (WAJIB)</p>
+            <div className="relative">
+              <input 
+                className={`w-full p-3 rounded border bg-purple-900/10 focus:shadow-[0_0_15px_rgba(188,19,254,0.3)] outline-none text-white transition-all ${formData.referralCode ? 'border-green-500' : 'border-purple-500'}`}
+                name="referralCode" 
+                placeholder="Masukkan Kode Upline / ADMIN" 
+                value={formData.referralCode} 
+                onChange={handleChange} 
+                required 
+              />
+              {searchParams.get("ref") && (
+                <span className="absolute right-3 top-2.5 text-[9px] bg-green-900 text-green-400 px-2 py-1 rounded font-bold">LINK AKTIF</span>
+              )}
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-6 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold py-3 rounded shadow-lg transition-all"
+            className="w-full mt-6 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-black py-4 rounded-xl shadow-lg transition-all active:scale-95 uppercase tracking-tighter"
           >
-            {loading ? "PROCESSING..." : "JOIN NETWORK"}
+            {loading ? "CONNECTING NETWORK..." : "JOIN NETWORK NOW"}
           </button>
         </form>
       </div>
