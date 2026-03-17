@@ -53,7 +53,6 @@ export default function Dashboard() {
 
   const [downlines, setDownlines] = useState<{lvl1: string[], lvl2: string[], lvl3: string[]}>({ lvl1: [], lvl2: [], lvl3: [] });
 
-  // --- 🔥 PERUBAHAN: MENAMBAHKAN ID WD KE DALAM PESAN TELEGRAM ---
   const sendWithdrawNotif = async (amount: number, fee: number, net: number, bank: string, wdId: string) => {
     const message = `
 📩 *REQUEST WITHDRAW BARU*
@@ -66,23 +65,17 @@ export default function Dashboard() {
 📅 Waktu: ${new Date().toLocaleString("id-ID")}
 ━━━━━━━━━━━━━━━━━━━━
 ⚡ *AKSI CEPAT VIA TELEGRAM:*
-✅ Setujui WD: /accwd_${wdId}
-❌ Tolak WD: /tolakwd_${wdId}
+✅ Setujui WD: /accwd${wdId}
+❌ Tolak WD: /tolakwd${wdId}
     `.trim();
 
     try {
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: TELEGRAM_CHAT_ID,
-          text: message,
-          parse_mode: "Markdown"
-        }),
+        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: "Markdown" }),
       });
-    } catch (e) {
-      console.error("Gagal kirim Telegram", e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   useEffect(() => {
@@ -133,7 +126,7 @@ export default function Dashboard() {
                     { pair: "JPY", price: IDR / dataForex.rates.JPY, change: -0.1 },
                 ]);
             }
-        } catch (e) { console.log("Gagal fetch market data."); }
+        } catch (e) {}
     };
     fetchMarketData();
   }, []);
@@ -178,26 +171,47 @@ export default function Dashboard() {
     setActiveModal("DEPOSIT_PAYMENT");
   }
 
+  // --- 🔥 PERUBAHAN: MENANGKAP ID DEPOSIT DAN KIRIM TOMBOL KE TELEGRAM ---
   const handleDepositSubmit = async () => {
     if (!userData) return;
-    if (!proofFile) { alert("Upload Bukti!"); return; }
+    if (!proofFile) { alert("Upload Bukti Transfer!"); return; }
     setIsSubmitting(true);
     const amount = parseInt(depoAmount);
     try {
       const totalTransfer = amount + uniqueCode;
+      
+      // 1. Simpan ke Database dulu untuk mendapatkan ID-nya
+      const docRef = await addDoc(collection(db, "deposits"), {
+        user_uid: auth.currentUser?.uid, 
+        user_nama: userData.profile.nama, 
+        amount_base: amount, 
+        unique_code: uniqueCode, 
+        total_transfer: totalTransfer, 
+        status: "pending", 
+        created_at: new Date().toISOString(),
+      });
+
+      // 2. Siapkan Caption Foto + Tombol ChatOps
+      const captionText = `🔥 *DEPOSIT BARU MASUK* 🔥\n━━━━━━━━━━━━━━━━━━━━\n👤 User: *${userData.profile.nama}*\n💰 Total: *Rp ${totalTransfer.toLocaleString("id-ID")}*\n📅 Waktu: ${new Date().toLocaleString("id-ID")}\n━━━━━━━━━━━━━━━━━━━━\n⚡ *AKSI CEPAT VIA TELEGRAM:*\n✅ Terima & Bagi Komisi: /accdepo${docRef.id}\n❌ Tolak Deposit: /tolakdepo${docRef.id}`;
+
+      // 3. Kirim ke Telegram API
       const formData = new FormData();
       formData.append("chat_id", TELEGRAM_CHAT_ID);
       formData.append("photo", proofFile);
-      formData.append("caption", `🔥 DEPOSIT BARU\nUser: ${userData.profile.nama}\nTotal: Rp ${totalTransfer.toLocaleString()}`);
+      formData.append("caption", captionText);
+      formData.append("parse_mode", "Markdown");
+
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, { method: "POST", body: formData }).catch(()=>null);
-      await addDoc(collection(db, "deposits"), {
-        user_uid: auth.currentUser?.uid, user_nama: userData.profile.nama, amount_base: amount, unique_code: uniqueCode, total_transfer: totalTransfer, status: "pending", created_at: new Date().toISOString(),
-      });
-      alert("Terkirim! Tunggu Admin."); setDepoAmount(""); setProofFile(null); setActiveModal(null);
-    } catch (err) { alert("Gagal."); } finally { setIsSubmitting(false); }
+      
+      alert("Bukti Terkirim! Saldo akan masuk setelah diverifikasi Admin."); 
+      setDepoAmount(""); setProofFile(null); setActiveModal(null);
+    } catch (err) { 
+      alert("Gagal memproses deposit."); 
+    } finally { 
+      setIsSubmitting(false); 
+    }
   };
 
-  // --- 🔥 PERUBAHAN: MENANGKAP ID TRANSAKSI UNTUK DIKIRIM KE TELEGRAM ---
   const handleWithdraw = async () => {
     if (!userData) return;
     const amount = parseInt(wdAmount);
@@ -210,7 +224,6 @@ export default function Dashboard() {
     
     setIsSubmitting(true);
     try {
-      // Tangkap 'docRef' untuk mendapatkan ID WD-nya
       const docRef = await addDoc(collection(db, "withdrawals"), {
         user_uid: auth.currentUser?.uid,
         user_nama: userData.profile.nama,
@@ -221,10 +234,7 @@ export default function Dashboard() {
         status: "pending",
         created_at: new Date().toISOString(),
       });
-      
-      // Kirim ID tersebut ke Telegram
       await sendWithdrawNotif(amount, fee, netAmount, bankInfo, docRef.id);
-      
       alert("Request WD Terkirim!"); setActiveModal(null); setWdAmount("");
     } catch (err) { alert("Gagal WD."); } finally { setIsSubmitting(false); }
   };
