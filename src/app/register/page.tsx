@@ -1,199 +1,146 @@
 "use client";
-import { useEffect, useState, Suspense } from "react";
-// Pastikan path import ini sesuai (gunakan ../.. jika file ada di src/app/register)
-import { auth, db } from "../../lib/firebase"; 
+import { useState, useEffect } from "react";
+import { auth, db } from "../../lib/firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc, collection, query, where, getDocs } from "firebase/firestore";
-import { useRouter, useSearchParams } from "next/navigation";
+import { doc, setDoc, getDocs, collection, query, where } from "firebase/firestore";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-// Next.js mewajibkan komponen yang memakai useSearchParams dibungkus Suspense
 export default function Register() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center text-cyan-400">LOADING SYSTEM...</div>}>
-      <RegisterContent />
-    </Suspense>
-  );
-}
-
-function RegisterContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  
-  const [formData, setFormData] = useState({
-    nama: "",
-    email: "",
-    hp: "",
-    password: "",
-    confirmPassword: "", 
-    referralCode: "",
-  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [nama, setNama] = useState("");
+  const [hp, setHp] = useState("");
+  const [referralInput, setReferralInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  // --- LOGIKA AUTO-INPUT REFERRAL DARI LINK ---
   useEffect(() => {
-    const refFromUrl = searchParams.get("ref");
-    if (refFromUrl) {
-      setFormData((prev) => ({ ...prev, referralCode: refFromUrl }));
-    }
-  }, [searchParams]);
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (ref) setReferralInput(ref);
+  }, []);
 
-  const handleChange = (e: any) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleRegister = async (e: any) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    
+    // KUNCI 1: Validasi Input Referral Tidak Boleh Kosong
+    if (!referralInput.trim()) {
+      alert("⚠️ KODE REFERRAL WAJIB DIISI! Pendaftaran Master Saving hanya melalui jalur undangan.");
+      return;
+    }
+
     setLoading(true);
 
-    // --- VALIDASI PASSWORD ---
-    if (formData.password !== formData.confirmPassword) {
-      setError("Password tidak sama! Harap ulangi ketik password.");
-      setLoading(false);
-      return; 
-    }
+    try {
+      // KUNCI 2: Validasi Apakah Kode Referral Tersebut Ada di Database
+      const q = query(collection(db, "users"), where("network.my_referral_code", "==", referralInput.trim()));
+      const querySnapshot = await getDocs(q);
 
-    if (formData.password.length < 6) {
-        setError("Password minimal 6 karakter.");
+      if (querySnapshot.empty && referralInput !== "MASTER-ADMIN") { // Tambahkan bypass khusus admin jika perlu
+        alert("⚠️ KODE REFERRAL TIDAK VALID! Pastikan kode yang Anda masukkan benar.");
         setLoading(false);
         return;
-    }
-
-    try {
-      let upline1 = null;
-      let upline2 = null;
-      let upline3 = null;
-
-      // --- LOGIKA REFERRAL ---
-      if (formData.referralCode === "ADMIN") {
-        console.log("Genesis User detected");
-      } else {
-        const q = query(
-            collection(db, "users"), 
-            where("network.my_referral_code", "==", formData.referralCode)
-        );
-        const querySnapshot = await getDocs(q);
-
-        if (querySnapshot.empty) {
-          throw new Error("Kode Referral TIDAK VALID! Gunakan kode upline yang benar.");
-        }
-
-        const uplineDoc = querySnapshot.docs[0].data();
-        upline1 = uplineDoc.uid;
-        upline2 = uplineDoc.network?.upline_1 || null;
-        upline3 = uplineDoc.network?.upline_2 || null;
       }
 
-      // 1. Buat Akun Auth
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
+      // Ambil data upline 1
+      let upline1Data = !querySnapshot.empty ? querySnapshot.docs[0].data() : null;
+      let u1Id = !querySnapshot.empty ? querySnapshot.docs[0].id : "ADMIN";
+      let u2Id = upline1Data?.network?.upline_1 || "ADMIN";
+      let u3Id = upline1Data?.network?.upline_2 || "ADMIN";
+
+      // Proses Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // 2. Generate Kode Referral Baru
-      const codePrefix = formData.nama.substring(0, 3).toUpperCase();
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      const newReferralCode = `${codePrefix}${randomNum}`;
+      // Generate Kode Referral Baru untuk Member Baru
+      const myRefCode = "MS-" + Math.random().toString(36).substring(2, 6).toUpperCase() + Math.floor(1000 + Math.random() * 9000);
 
-      // 3. Simpan Data Profil
       await setDoc(doc(db, "users", user.uid), {
-        uid: user.uid,
         profile: {
-          nama: formData.nama,
-          email: formData.email,
-          hp: formData.hp,
-          join_date: new Date().toISOString(),
+          nama: nama,
+          hp: hp,
+          email: email,
+          created_at: new Date().toISOString(),
         },
         finance: {
           saldo_utama: 0,
+          total_profit: 0,
           last_profit_calc: new Date().toISOString(),
         },
         network: {
-          my_referral_code: newReferralCode,
-          upline_1: upline1,
-          upline_2: upline2,
-          upline_3: upline3,
-        },
-        role: "user"
+          my_referral_code: myRefCode,
+          upline_1: u1Id,
+          upline_2: u2Id,
+          upline_3: u3Id,
+        }
       });
 
-      alert(`Registrasi Berhasil! Kode Referral Kamu: ${newReferralCode}`);
-      router.push("/dashboard"); 
-
+      alert("Pendaftaran Berhasil! Selamat datang di jaringan Master Saving.");
+      router.push("/dashboard");
     } catch (err: any) {
-      console.error(err);
-      setError(err.message);
+      alert("Gagal Daftar: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-black text-white font-sans">
-      <div className="glass-panel p-8 rounded-xl max-w-md w-full shadow-[0_0_40px_rgba(0,243,255,0.15)] border border-gray-800 bg-gray-900/50 backdrop-blur">
-        <h2 className="text-3xl font-bold text-center mb-6 neon-text text-cyan-400 italic">
-          SYSTEM REGISTER
-        </h2>
+    <div className="min-h-screen bg-[#050505] text-white flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-sm bg-[#111] border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        
+        <div className="text-center mb-6">
+          <h1 className="text-xl font-black tracking-widest text-yellow-500">JOIN MASTER SAVING</h1>
+          <p className="text-[9px] text-gray-500 uppercase tracking-widest mt-1">Sistem Eksklusif Berbasis Undangan</p>
+        </div>
 
-        {error && (
-          <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded mb-4 text-sm text-center animate-pulse">
-            {error}
+        <form onSubmit={handleRegister} className="space-y-3">
+          <div>
+            <label className="text-[10px] text-gray-400 font-bold ml-1 uppercase">Nama Lengkap</label>
+            <input type="text" required value={nama} onChange={e => setNama(e.target.value)} className="w-full bg-black border border-gray-800 rounded-lg p-2.5 text-sm outline-none focus:border-yellow-500 transition" placeholder="Sesuai KTP" />
           </div>
-        )}
 
-        <form onSubmit={handleRegister} className="space-y-4">
-          <input 
-            className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="nama" placeholder="Nama Lengkap" value={formData.nama} onChange={handleChange} required 
-          />
-          <input 
-            className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="email" type="email" placeholder="Email" value={formData.email} onChange={handleChange} required 
-          />
-          <input 
-            className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-            name="hp" type="tel" placeholder="Nomor WA (08xxx)" value={formData.hp} onChange={handleChange} required 
-          />
-          
-          <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[10px] text-gray-400 font-bold ml-1 uppercase">Email Aktif</label>
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-black border border-gray-800 rounded-lg p-2.5 text-sm outline-none focus:border-yellow-500 transition" placeholder="nama@email.com" />
+            <p className="text-[9px] text-yellow-600 italic mt-1 ml-1 leading-tight">
+              ⚠️ Gunakan email aktif untuk fitur reset password.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-gray-400 font-bold ml-1 uppercase">Nomor WhatsApp</label>
+            <input type="number" required value={hp} onChange={e => setHp(e.target.value)} className="w-full bg-black border border-gray-800 rounded-lg p-2.5 text-sm outline-none focus:border-yellow-500 transition" placeholder="0812xxxx" />
+          </div>
+
+          <div>
+            <label className="text-[10px] text-gray-400 font-bold ml-1 uppercase">Buat Password</label>
+            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-black border border-gray-800 rounded-lg p-2.5 text-sm outline-none focus:border-yellow-500 transition" placeholder="Minimal 6 Karakter" />
+          </div>
+
+          <div className="pt-2">
+            <label className="text-[10px] text-red-500 font-bold ml-1 uppercase">Kode Referral (Wajib)</label>
             <input 
-                className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-                name="password" type="password" placeholder="Password" value={formData.password} onChange={handleChange} required 
+              type="text" 
+              required 
+              value={referralInput} 
+              onChange={e => setReferralInput(e.target.value)} 
+              className="w-full bg-red-900/10 border border-red-900/30 rounded-lg p-2.5 text-sm text-yellow-500 font-mono outline-none focus:border-red-500" 
+              placeholder="Masukkan kode undangan" 
             />
-            <input 
-                className="w-full p-3 rounded border border-gray-700 bg-black/50 focus:border-cyan-400 outline-none transition-all text-white"
-                name="confirmPassword" type="password" placeholder="Ulangi Pass" value={formData.confirmPassword} onChange={handleChange} required 
-            />
-          </div>
-          
-          <div className="pt-2 border-t border-gray-800 mt-4">
-            <p className="text-xs text-purple-400 mb-1 font-bold">KODE REFERRAL (WAJIB)</p>
-            <div className="relative">
-              <input 
-                className={`w-full p-3 rounded border bg-purple-900/10 focus:shadow-[0_0_15px_rgba(188,19,254,0.3)] outline-none text-white transition-all ${formData.referralCode ? 'border-green-500' : 'border-purple-500'}`}
-                name="referralCode" 
-                placeholder="Masukkan Kode Upline / ADMIN" 
-                value={formData.referralCode} 
-                onChange={handleChange} 
-                required 
-              />
-              {searchParams.get("ref") && (
-                <span className="absolute right-3 top-2.5 text-[9px] bg-green-900 text-green-400 px-2 py-1 rounded font-bold">LINK AKTIF</span>
-              )}
-            </div>
+            <p className="text-[9px] text-gray-600 italic mt-1 ml-1">
+              *Pendaftaran memerlukan kode valid dari pengundang Anda.
+            </p>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-6 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-black py-4 rounded-xl shadow-lg transition-all active:scale-95 uppercase tracking-tighter"
-          >
-            {loading ? "CONNECTING NETWORK..." : "JOIN NETWORK NOW"}
+          <button type="submit" disabled={loading} className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-black py-3 rounded-lg text-xs uppercase tracking-widest transition mt-4 disabled:opacity-50">
+            {loading ? "MENGECEK KODE..." : "KONFIRMASI PENDAFTARAN"}
           </button>
         </form>
+
+        <p className="text-[10px] text-center text-gray-500 mt-6">
+          Sudah punya akun? <Link href="/login" className="text-yellow-500 font-bold hover:underline underline-offset-4">LOGIN DISINI</Link>
+        </p>
       </div>
     </div>
   );
