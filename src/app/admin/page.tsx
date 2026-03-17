@@ -114,56 +114,110 @@ export default function AdminPanel() {
     }
   };
 
+  // --- 🔥 PERBAIKAN LOGIKA PEMBAGIAN PROFIT JARINGAN 🔥 ---
   const handleRunDailyProfit = async () => {
     if (!confirm("⚠️ PERINGATAN KERAS!\n\nApakah Anda yakin ingin menjalankan PROFIT HARIAN sekarang?\n\nKlik OK untuk melanjutkan.")) return;
     setIsProfitRunning(true);
     let processedCount = 0;
+    
     try {
         const allUsersSnap = await getDocs(collection(db, "users"));
         const timestamp = new Date().toISOString();
+        
         for (const userDoc of allUsersSnap.docs) {
             const uData = userDoc.data();
             const currentSaldo = uData.finance?.saldo_utama || 0;
+            
+            // Hanya bagikan profit ke member yang saldonya >= 50.000
             if (currentSaldo >= 50000) {
                 await runTransaction(db, async (transaction) => {
-                    const u1Id = uData.network?.upline_1; const u2Id = uData.network?.upline_2; const u3Id = uData.network?.upline_3;
+                    const u1Id = uData.network?.upline_1; 
+                    const u2Id = uData.network?.upline_2; 
+                    const u3Id = uData.network?.upline_3;
+                    
                     let u1Doc, u2Doc, u3Doc;
                     if (u1Id) u1Doc = await transaction.get(doc(db, "users", u1Id));
                     if (u2Id) u2Doc = await transaction.get(doc(db, "users", u2Id));
                     if (u3Id) u3Doc = await transaction.get(doc(db, "users", u3Id));
 
+                    // 1. Hitung Profit Pribadi si Member (0.35%)
                     const profitHarian = Math.floor(currentSaldo * 0.0035); 
-                    transaction.update(doc(db, "users", userDoc.id), { "finance.saldo_utama": currentSaldo + profitHarian, "finance.last_profit_calc": timestamp });
-                    transaction.set(doc(collection(db, "profit_logs")), { uid: userDoc.id, amount: profitHarian, created_at: timestamp, desc: "Profit Mining Harian" });
+                    transaction.update(doc(db, "users", userDoc.id), { 
+                        "finance.saldo_utama": currentSaldo + profitHarian, 
+                        "finance.last_profit_calc": timestamp 
+                    });
+                    transaction.set(doc(collection(db, "profit_logs")), { 
+                        uid: userDoc.id, 
+                        amount: profitHarian, 
+                        created_at: timestamp, 
+                        desc: "Profit Mining Harian" 
+                    });
 
+                    // 2. Hitung Profit Jaringan (Diambil dari persentase Profit Harian si Member)
+                    // Level 1: 10% dari Profit Member
                     if (u1Doc && u1Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.10);
-                        if (bonus > 0) {
-                            transaction.update(doc(db, "users", u1Id), { "finance.saldo_utama": (u1Doc.data().finance?.saldo_utama || 0) + bonus });
-                            transaction.set(doc(collection(db, "bonuses")), { uid: u1Id, amount: bonus, from_nama: uData.profile.nama, level: 1, created_at: timestamp, type: "PASSIVE" });
+                        const bonusLvl1 = Math.floor(profitHarian * 0.10);
+                        if (bonusLvl1 > 0) {
+                            transaction.update(doc(db, "users", u1Id), { 
+                                "finance.saldo_utama": (u1Doc.data().finance?.saldo_utama || 0) + bonusLvl1 
+                            });
+                            transaction.set(doc(collection(db, "bonuses")), { 
+                                uid: u1Id, 
+                                amount: bonusLvl1, 
+                                from_nama: uData.profile.nama, 
+                                level: 1, 
+                                created_at: timestamp, 
+                                type: "PASSIVE" 
+                            });
                         }
                     }
+
+                    // Level 2: 5% dari Profit Member
                     if (u2Doc && u2Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.05);
-                        if (bonus > 0) {
-                            transaction.update(doc(db, "users", u2Id), { "finance.saldo_utama": (u2Doc.data().finance?.saldo_utama || 0) + bonus });
-                            transaction.set(doc(collection(db, "bonuses")), { uid: u2Id, amount: bonus, from_nama: uData.profile.nama, level: 2, created_at: timestamp, type: "PASSIVE" });
+                        const bonusLvl2 = Math.floor(profitHarian * 0.05);
+                        if (bonusLvl2 > 0) {
+                            transaction.update(doc(db, "users", u2Id), { 
+                                "finance.saldo_utama": (u2Doc.data().finance?.saldo_utama || 0) + bonusLvl2 
+                            });
+                            transaction.set(doc(collection(db, "bonuses")), { 
+                                uid: u2Id, 
+                                amount: bonusLvl2, 
+                                from_nama: uData.profile.nama, 
+                                level: 2, 
+                                created_at: timestamp, 
+                                type: "PASSIVE" 
+                            });
                         }
                     }
+
+                    // Level 3: 1% dari Profit Member (Diperbaiki dari 0.02 menjadi 0.01)
                     if (u3Doc && u3Doc.exists()) {
-                        const bonus = Math.floor(profitHarian * 0.02);
-                        if (bonus > 0) {
-                            transaction.update(doc(db, "users", u3Id), { "finance.saldo_utama": (u3Doc.data().finance?.saldo_utama || 0) + bonus });
-                            transaction.set(doc(collection(db, "bonuses")), { uid: u3Id, amount: bonus, from_nama: uData.profile.nama, level: 3, created_at: timestamp, type: "PASSIVE" });
+                        const bonusLvl3 = Math.floor(profitHarian * 0.01);
+                        if (bonusLvl3 > 0) {
+                            transaction.update(doc(db, "users", u3Id), { 
+                                "finance.saldo_utama": (u3Doc.data().finance?.saldo_utama || 0) + bonusLvl3 
+                            });
+                            transaction.set(doc(collection(db, "bonuses")), { 
+                                uid: u3Id, 
+                                amount: bonusLvl3, 
+                                from_nama: uData.profile.nama, 
+                                level: 3, 
+                                created_at: timestamp, 
+                                type: "PASSIVE" 
+                            });
                         }
                     }
                 });
                 processedCount++;
             }
         }
-        alert(`✅ SUKSES! Profit dibagikan ke ${processedCount} member.`);
+        alert(`✅ SUKSES! Profit harian dan komisi jaringan dibagikan ke ${processedCount} member aktif.`);
         fetchStatsAndUsers(); 
-    } catch (e:any) { alert("Gagal: " + e.message); } finally { setIsProfitRunning(false); }
+    } catch (e:any) { 
+        alert("Gagal membagikan profit: " + e.message); 
+    } finally { 
+        setIsProfitRunning(false); 
+    }
   };
 
   const handleApproveDeposit = async (req: any) => {
