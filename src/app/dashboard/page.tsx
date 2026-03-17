@@ -447,8 +447,8 @@ _Segera cek God Mode Panel!_
           <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-gray-700 p-6 h-[70vh] flex flex-col">
             <div className="flex justify-between mb-4"><h3 className="font-bold">Network</h3><button onClick={()=>setActiveModal(null)}>✕</button></div>
             <div className="overflow-y-auto space-y-4">
-                <div className="bg-gray-800 p-2 rounded"><h4 className="text-xs font-bold text-yellow-500">LVL 1 (5%) - {downlines.lvl1.length}</h4><p className="text-xs text-gray-400">{downlines.lvl1.join(", ")}</p></div>
-                <div className="bg-gray-800 p-2 rounded"><h4 className="text-xs font-bold text-blue-500">LVL 2 (3%) - {downlines.lvl2.length}</h4><p className="text-xs text-gray-400">{downlines.lvl2.join(", ")}</p></div>
+                <div className="bg-gray-800 p-2 rounded"><h4 className="text-xs font-bold text-yellow-500">LVL 1 (10%) - {downlines.lvl1.length}</h4><p className="text-xs text-gray-400">{downlines.lvl1.join(", ")}</p></div>
+                <div className="bg-gray-800 p-2 rounded"><h4 className="text-xs font-bold text-blue-500">LVL 2 (5%) - {downlines.lvl2.length}</h4><p className="text-xs text-gray-400">{downlines.lvl2.join(", ")}</p></div>
                 <div className="bg-gray-800 p-2 rounded"><h4 className="text-xs font-bold text-purple-500">LVL 3 (1%) - {downlines.lvl3.length}</h4><p className="text-xs text-gray-400">{downlines.lvl3.join(", ")}</p></div>
             </div>
           </div>
