@@ -40,7 +40,6 @@ export default function Dashboard() {
   const [cryptoData, setCryptoData] = useState<any[]>(FALLBACK_CRYPTO);
   const [forexData, setForexData] = useState<any[]>(FALLBACK_FOREX);
 
-  // --- STATE COUNTDOWN PROFIT ---
   const [timeLeft, setTimeLeft] = useState("00:00:00");
   const [progress, setProgress] = useState(0);
 
@@ -54,8 +53,8 @@ export default function Dashboard() {
 
   const [downlines, setDownlines] = useState<{lvl1: string[], lvl2: string[], lvl3: string[]}>({ lvl1: [], lvl2: [], lvl3: [] });
 
-  // --- FUNGSI NOTIFIKASI TELEGRAM WITHDRAW ---
-  const sendWithdrawNotif = async (amount: number, fee: number, net: number, bank: string) => {
+  // --- 🔥 PERUBAHAN: MENAMBAHKAN ID WD KE DALAM PESAN TELEGRAM ---
+  const sendWithdrawNotif = async (amount: number, fee: number, net: number, bank: string, wdId: string) => {
     const message = `
 📩 *REQUEST WITHDRAW BARU*
 ━━━━━━━━━━━━━━━━━━━━
@@ -66,7 +65,9 @@ export default function Dashboard() {
 🏦 Bank: *${bank}*
 📅 Waktu: ${new Date().toLocaleString("id-ID")}
 ━━━━━━━━━━━━━━━━━━━━
-_Segera cek God Mode Panel!_
+⚡ *AKSI CEPAT VIA TELEGRAM:*
+✅ Setujui WD: /accwd_${wdId}
+❌ Tolak WD: /tolakwd_${wdId}
     `.trim();
 
     try {
@@ -84,11 +85,9 @@ _Segera cek God Mode Panel!_
     }
   };
 
-  // --- EFFECT COUNTDOWN PROFIT SIKLUS HARIAN ---
   useEffect(() => {
     const updateTimer = () => {
       const now = new Date();
-      // Target ke jam 00:00 (tengah malam) hari berikutnya
       const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
       const diff = tomorrow.getTime() - now.getTime();
       
@@ -96,17 +95,14 @@ _Segera cek God Mode Panel!_
       const m = Math.floor((diff / 1000 / 60) % 60);
       const s = Math.floor((diff / 1000) % 60);
 
-      setTimeLeft(
-        `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`
-      );
+      setTimeLeft(`${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`);
 
-      // Kalkulasi persentase bar (berapa persen hari ini sudah berlalu)
       const totalMsInDay = 24 * 60 * 60 * 1000;
       const passedMs = totalMsInDay - diff;
       setProgress((passedMs / totalMsInDay) * 100);
     };
 
-    updateTimer(); // Panggil sekali langsung
+    updateTimer(); 
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
   }, []);
@@ -114,7 +110,6 @@ _Segera cek God Mode Panel!_
   useEffect(() => {
     const fetchMarketData = async () => {
         try {
-            // 1. Fetch Data Crypto
             const resCrypto = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple&vs_currencies=idr&include_24hr_change=true");
             const dataCrypto = await resCrypto.json();
             if(dataCrypto.bitcoin) {
@@ -126,8 +121,6 @@ _Segera cek God Mode Panel!_
                     { pair: "XRP", price: dataCrypto.ripple.idr, change: dataCrypto.ripple.idr_24h_change },
                 ]);
             }
-            
-            // 2. Fetch Data Forex
             const resForex = await fetch("https://open.er-api.com/v6/latest/USD");
             const dataForex = await resForex.json();
             if(dataForex.rates) {
@@ -155,10 +148,7 @@ _Segera cek God Mode Panel!_
           setUserData(data);
           const now = new Date().getTime();
           const lastUpdateStr = data.finance.last_profit_calc;
-          const lastUpdate = (lastUpdateStr && !isNaN(Date.parse(lastUpdateStr))) 
-            ? new Date(lastUpdateStr).getTime() 
-            : now;
-            
+          const lastUpdate = (lastUpdateStr && !isNaN(Date.parse(lastUpdateStr))) ? new Date(lastUpdateStr).getTime() : now;
           const diffSeconds = Math.max(0, (now - lastUpdate) / 1000);
           const profitPerSec = (data.finance.saldo_utama * 0.025) / 604800;
           setLiveSaldo(data.finance.saldo_utama + (profitPerSec * diffSeconds));
@@ -207,6 +197,7 @@ _Segera cek God Mode Panel!_
     } catch (err) { alert("Gagal."); } finally { setIsSubmitting(false); }
   };
 
+  // --- 🔥 PERUBAHAN: MENANGKAP ID TRANSAKSI UNTUK DIKIRIM KE TELEGRAM ---
   const handleWithdraw = async () => {
     if (!userData) return;
     const amount = parseInt(wdAmount);
@@ -219,7 +210,8 @@ _Segera cek God Mode Panel!_
     
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, "withdrawals"), {
+      // Tangkap 'docRef' untuk mendapatkan ID WD-nya
+      const docRef = await addDoc(collection(db, "withdrawals"), {
         user_uid: auth.currentUser?.uid,
         user_nama: userData.profile.nama,
         amount: amount,
@@ -230,7 +222,8 @@ _Segera cek God Mode Panel!_
         created_at: new Date().toISOString(),
       });
       
-      await sendWithdrawNotif(amount, fee, netAmount, bankInfo);
+      // Kirim ID tersebut ke Telegram
+      await sendWithdrawNotif(amount, fee, netAmount, bankInfo, docRef.id);
       
       alert("Request WD Terkirim!"); setActiveModal(null); setWdAmount("");
     } catch (err) { alert("Gagal WD."); } finally { setIsSubmitting(false); }
@@ -277,7 +270,6 @@ _Segera cek God Mode Panel!_
 
       <main className="max-w-md mx-auto pt-20 px-4 space-y-6">
         
-        {/* ASSETS CARD */}
         <div className="bg-[#111] rounded-xl p-6 border border-white/10 relative overflow-hidden z-10">
           <div className="absolute top-0 right-0 p-2"><div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div></div>
           <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">Total Assets</p>
@@ -288,7 +280,6 @@ _Segera cek God Mode Panel!_
           </div>
         </div>
 
-        {/* PAPAN BURSA */}
         <div className="grid grid-cols-2 gap-3 h-40">
             <div className="bg-[#0a0a0a] border border-white/5 rounded-lg overflow-hidden relative">
                 <div className="bg-[#151515] p-2 text-[9px] text-gray-500 font-bold text-center border-b border-white/5 uppercase tracking-wider">KURS IDR (LIVE)</div>
@@ -318,7 +309,6 @@ _Segera cek God Mode Panel!_
             </div>
         </div>
 
-        {/* COUNTDOWN PROFIT CYCLE */}
         <div className="bg-[#0a0a0a] border border-white/5 rounded-xl overflow-hidden relative p-4 shadow-[0_4px_20px_-5px_rgba(0,0,0,0.5)]">
             <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-2">
@@ -329,36 +319,19 @@ _Segera cek God Mode Panel!_
                     {timeLeft}
                 </div>
             </div>
-            
-            {/* Progress Bar Container */}
             <div className="w-full bg-black border border-white/10 h-2 rounded-full overflow-hidden">
-                {/* Progress Bar Fill */}
-                <div 
-                    className="bg-gradient-to-r from-yellow-600 to-green-500 h-full transition-all duration-1000 ease-linear shadow-[0_0_10px_rgba(34,197,94,0.5)]"
-                    style={{ width: `${progress}%` }}
-                ></div>
+                <div className="bg-gradient-to-r from-yellow-600 to-green-500 h-full transition-all duration-1000 ease-linear shadow-[0_0_10px_rgba(34,197,94,0.5)]" style={{ width: `${progress}%` }}></div>
             </div>
-            
             <p className="text-[9px] text-gray-600 mt-2 text-right italic font-medium">Profit diakumulasi real-time. Reset siklus pada 00:00.</p>
         </div>
 
-        {/* MENU GRID */}
         <div className="grid grid-cols-4 gap-2">
-          <button onClick={() => setActiveModal("WD")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-blue-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
-            <div className="text-blue-400 font-bold text-lg">↓</div><p className="text-[9px] text-gray-400">WD</p>
-          </button>
-          <button onClick={() => router.push("/history")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-yellow-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
-            <div className="text-yellow-500 font-bold text-lg">🕒</div><p className="text-[9px] text-gray-400">Riwayat</p>
-          </button>
-          <button onClick={loadNetwork} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-purple-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
-            <div className="text-purple-400 font-bold text-lg">∞</div><p className="text-[9px] text-gray-400">Tim</p>
-          </button>
-          <button onClick={() => router.push("/profile")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-green-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition">
-            <div className="text-green-400 font-bold text-lg">⚙</div><p className="text-[9px] text-gray-400">Akun</p>
-          </button>
+          <button onClick={() => setActiveModal("WD")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-blue-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition"><div className="text-blue-400 font-bold text-lg">↓</div><p className="text-[9px] text-gray-400">WD</p></button>
+          <button onClick={() => router.push("/history")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-yellow-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition"><div className="text-yellow-500 font-bold text-lg">🕒</div><p className="text-[9px] text-gray-400">Riwayat</p></button>
+          <button onClick={loadNetwork} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-purple-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition"><div className="text-purple-400 font-bold text-lg">∞</div><p className="text-[9px] text-gray-400">Tim</p></button>
+          <button onClick={() => router.push("/profile")} className="bg-[#111] p-2 rounded-xl border border-white/5 hover:border-green-500/50 flex flex-col items-center justify-center gap-1 active:scale-95 transition"><div className="text-green-400 font-bold text-lg">⚙</div><p className="text-[9px] text-gray-400">Akun</p></button>
         </div>
 
-        {/* DEPOSIT FORM */}
         <div className="bg-[#111] rounded-xl p-5 border border-yellow-600/30">
           <h2 className="text-sm font-bold text-yellow-500 mb-4">⚡ INSTANT DEPOSIT</h2>
           <form onSubmit={openDepositModal} className="space-y-4">
@@ -367,33 +340,18 @@ _Segera cek God Mode Panel!_
           </form>
         </div>
         
-        {/* REFERRAL SECTION - AUTO LINK GENERATOR */}
         <div className="bg-[#111] p-4 rounded-xl border border-white/5 space-y-3">
             <div>
                 <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Link Referral Anda (Siap Share)</p>
                 <div className="flex bg-black border border-gray-800 rounded-lg p-3 items-center gap-3">
-                    <p className="font-mono text-[11px] text-yellow-500 truncate flex-1">
-                      {typeof window !== "undefined" 
-                        ? `${window.location.origin}/register?ref=${userData?.network.my_referral_code}` 
-                        : "Loading Link..."}
-                    </p>
-                    <button 
-                        onClick={() => {
-                            const refLink = `${window.location.origin}/register?ref=${userData?.network.my_referral_code}`;
-                            navigator.clipboard.writeText(refLink);
-                            alert("✅ Link Berhasil Di-copy! Silakan share ke calon downline.");
-                        }} 
-                        className="text-[10px] bg-yellow-600 text-black px-3 py-1.5 rounded font-bold hover:bg-yellow-500 active:scale-95 transition"
-                    >
-                        COPY
-                    </button>
+                    <p className="font-mono text-[11px] text-yellow-500 truncate flex-1">{typeof window !== "undefined" ? `${window.location.origin}/register?ref=${userData?.network.my_referral_code}` : "Loading Link..."}</p>
+                    <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/register?ref=${userData?.network.my_referral_code}`); alert("✅ Link Berhasil Di-copy!"); }} className="text-[10px] bg-yellow-600 text-black px-3 py-1.5 rounded font-bold hover:bg-yellow-500 active:scale-95 transition">COPY</button>
                 </div>
             </div>
             <p className="text-[9px] text-gray-600 italic">*Calon member yang klik link ini tidak perlu mengisi kode referral lagi secara manual.*</p>
         </div>
       </main>
 
-      {/* POPUP DEPOSIT */}
       {activeModal === "DEPOSIT_PAYMENT" && (
         <div className="fixed inset-0 z-[60] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-yellow-500/30 p-1 animate-in zoom-in-95 overflow-y-auto max-h-[90vh]">
@@ -409,7 +367,6 @@ _Segera cek God Mode Panel!_
         </div>
       )}
 
-      {/* MODAL WD */}
       {activeModal === "WD" && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
           <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-gray-700 p-6">
@@ -421,13 +378,10 @@ _Segera cek God Mode Panel!_
                     <p className="text-xs font-bold text-white">{userData.profile.bank_name} - {userData.profile.rek_number}</p>
                     <p className="text-xs text-gray-400">a.n {userData.profile.rek_name}</p>
                 </div>
-            ) : (
-                <p className="text-xs text-red-400 mb-4 bg-red-900/20 p-2 rounded border border-red-500/20">⚠ Anda belum atur rekening. <button onClick={()=>router.push("/profile")} className="underline font-bold">KLIK DISINI</button></p>
-            )}
+            ) : ( <p className="text-xs text-red-400 mb-4 bg-red-900/20 p-2 rounded border border-red-500/20">⚠ Anda belum atur rekening. <button onClick={()=>router.push("/profile")} className="underline font-bold">KLIK DISINI</button></p> )}
             
             <input type="number" placeholder="Jumlah WD (Min 50.000)" value={wdAmount} onChange={e=>setWdAmount(e.target.value)} className="w-full bg-black border border-gray-700 rounded p-3 text-white mb-2" />
             
-            {/* TAMPILAN FEE 5% */}
             {currentWdValue >= 50000 && (
                 <div className="bg-[#111] p-3 rounded border border-white/5 mb-4 text-xs">
                     <div className="flex justify-between text-gray-400 mb-1"><span>Potongan Saldo:</span> <span>{formatIDR(currentWdValue)}</span></div>
@@ -435,13 +389,11 @@ _Segera cek God Mode Panel!_
                     <div className="flex justify-between text-green-400 font-bold pt-1 border-t border-white/10 mt-1"><span>Diterima Bersih:</span> <span>{formatIDR(wdNet)}</span></div>
                 </div>
             )}
-
             <button onClick={handleWithdraw} disabled={isSubmitting || currentWdValue < 50000} className={`w-full py-3 text-white font-bold rounded ${currentWdValue >= 50000 ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 cursor-not-allowed'}`}>REQUEST PAYOUT</button>
           </div>
         </div>
       )}
 
-      {/* MODAL NETWORK */}
       {activeModal === "NETWORK" && (
         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
           <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-gray-700 p-6 h-[70vh] flex flex-col">
