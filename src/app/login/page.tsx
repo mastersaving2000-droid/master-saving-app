@@ -1,142 +1,148 @@
 "use client";
 import { useState } from "react";
-import { auth } from "../../lib/firebase"; 
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../../lib/firebase";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useRouter } from "next/navigation";
-
-// --- KONFIGURASI TELEGRAM ---
-const TELEGRAM_BOT_TOKEN = "8487855373:AAEZ8Al7Su6BzqCECCuF7iRgULk1bBS7Ly0";
-const TELEGRAM_CHAT_ID = "788284460";
+import Link from "next/link";
 
 export default function Login() {
   const router = useRouter();
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const handleChange = (e: any) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  // --- STATE UNTUK FITUR LUPA PASSWORD ---
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
-  const handleLogin = async (e: any) => {
+  // --- FUNGSI LOGIN UTAMA ---
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
-
     try {
-      await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      await signInWithEmailAndPassword(auth, email, password);
       router.push("/dashboard");
     } catch (err: any) {
-      console.error(err);
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
-        setError("Email atau Password salah!");
-      } else if (err.code === 'auth/too-many-requests') {
-        setError("Terlalu banyak mencoba. Tunggu sebentar.");
-      } else {
-        setError("Gagal Login: " + err.message);
-      }
-    } finally {
+      alert("⚠️ Gagal Login: Cek kembali Email dan Password Anda.");
       setLoading(false);
     }
   };
 
-  // --- LOGIKA LUPA PASSWORD KE TELEGRAM ---
-  const handleLostPassword = async () => {
-    const email = prompt("Masukkan Email Anda untuk reset password:");
-    if (!email) return;
-
+  // --- FUNGSI RESET PASSWORD VIA EMAIL ---
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) {
+      alert("Masukkan email Anda terlebih dahulu!");
+      return;
+    }
+    setIsResetting(true);
     try {
-      // Kirim Notifikasi ke Telegram Admin
-      const text = `
-🚨 *REQUEST RESET PASSWORD*
----------------------------
-📧 Email: ${email}
----------------------------
-Mohon Admin cek database, reset password user ini, dan kirim password baru via WA.
-      `;
-      
-      const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=${encodeURIComponent(text)}&parse_mode=Markdown`;
-      
-      await fetch(url);
-      
-      alert("Permintaan Reset Password TERKIRIM! Admin akan mengirim password baru ke WhatsApp Anda.");
-    } catch (e) {
-      alert("Gagal mengirim permintaan. Cek koneksi.");
+      await sendPasswordResetEmail(auth, resetEmail);
+      alert("✅ Link reset password telah dikirim! Silakan cek Inbox atau folder Spam di email Anda.");
+      setShowResetModal(false);
+      setResetEmail("");
+    } catch (err: any) {
+      alert("⚠️ Gagal mengirim email. Pastikan email tersebut sudah terdaftar di sistem kami.");
+    } finally {
+      setIsResetting(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-black text-white relative overflow-hidden">
-      
-      {/* Background Effects */}
-      <div className="fixed top-[-20%] left-[-20%] w-[60%] h-[60%] bg-purple-900/20 rounded-full blur-[120px] pointer-events-none"></div>
-      <div className="fixed bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-cyan-900/20 rounded-full blur-[120px] pointer-events-none"></div>
-
-      <div className="glass-panel p-8 rounded-xl max-w-md w-full shadow-[0_0_40px_rgba(188,19,254,0.15)] border border-purple-900/50 relative z-10 bg-black/50 backdrop-blur-md">
-        
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold neon-text text-purple-500 tracking-tighter">
-            LOGIN
-          </h1>
-          <p className="text-gray-400 text-xs mt-2 tracking-widest">MASTER SAVING SYSTEM</p>
+    <div className="min-h-screen bg-[#050505] text-white flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-sm bg-[#111] border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        {/* Dekorasi Vibe Coding */}
+        <div className="absolute top-0 right-0 p-4">
+          <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
         </div>
 
-        {error && (
-          <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded mb-6 text-sm text-center">
-            {error}
-          </div>
-        )}
+        <div className="text-center mb-8 mt-4">
+          <h1 className="text-2xl font-black tracking-widest text-yellow-500">MASTER SAVING</h1>
+          <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">Sistem Auto-Profit Berjalan</p>
+        </div>
 
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-purple-400 text-xs mb-1 ml-1">IDENTITY (EMAIL)</label>
+            <label className="text-xs text-gray-400 font-bold ml-1">Email Terdaftar</label>
             <input 
-              className="w-full p-3 rounded bg-black/50 border border-gray-700 focus:border-purple-500 focus:shadow-[0_0_15px_rgba(188,19,254,0.3)] outline-none transition-all text-white"
-              name="email" type="email" placeholder="user@email.com" onChange={handleChange} required 
+              type="email" 
+              required
+              value={email} 
+              onChange={e => setEmail(e.target.value)} 
+              className="w-full bg-black border border-gray-700 rounded-lg p-3 text-white outline-none focus:border-yellow-500 transition mt-1" 
+              placeholder="nama@email.com"
             />
           </div>
-
           <div>
-            <label className="block text-purple-400 text-xs mb-1 ml-1">ACCESS KEY (PASSWORD)</label>
-            <input 
-              className="w-full p-3 rounded bg-black/50 border border-gray-700 focus:border-purple-500 focus:shadow-[0_0_15px_rgba(188,19,254,0.3)] outline-none transition-all text-white"
-              name="password" type="password" placeholder="••••••" onChange={handleChange} required 
-            />
-            {/* Tombol Lupa Password via Telegram */}
-            <div className="flex justify-end mt-2">
+            <div className="flex justify-between items-end ml-1">
+              <label className="text-xs text-gray-400 font-bold">Password</label>
+              {/* TOMBOL PEMICU LUPA PASSWORD */}
               <button 
-                type="button"
-                onClick={handleLostPassword}
-                className="text-xs text-gray-500 hover:text-purple-400 underline transition-colors"
+                type="button" 
+                onClick={() => setShowResetModal(true)} 
+                className="text-[10px] text-yellow-600 hover:text-yellow-400 transition"
               >
                 Lupa Password?
               </button>
             </div>
+            <input 
+              type="password" 
+              required
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+              className="w-full bg-black border border-gray-700 rounded-lg p-3 text-white outline-none focus:border-yellow-500 transition mt-1" 
+              placeholder="••••••••"
+            />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-purple-700 to-cyan-700 hover:from-purple-600 hover:to-cyan-600 text-white font-bold py-3 rounded shadow-lg transition-all transform hover:scale-[1.02]"
+          <button 
+            type="submit" 
+            disabled={loading} 
+            className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-black py-3 rounded-lg text-sm transition mt-2 disabled:opacity-50"
           >
-            {loading ? "AUTHENTICATING..." : "ACCESS SYSTEM"}
+            {loading ? "MEMVERIFIKASI..." : "MASUK KE DASHBOARD"}
           </button>
         </form>
 
-        <div className="mt-8 text-center border-t border-gray-800 pt-4">
-          <p className="text-gray-500 text-sm">Belum punya akun?</p>
-          <button 
-            onClick={() => router.push('/register')}
-            className="text-cyan-400 hover:text-cyan-300 font-bold mt-1"
-          >
-            DAFTAR SEKARANG
-          </button>
-        </div>
-
+        <p className="text-xs text-center text-gray-500 mt-6">
+          Belum punya akun? <Link href="/register" className="text-yellow-500 font-bold hover:underline">Daftar Disini</Link>
+        </p>
       </div>
+
+      {/* --- MODAL POPUP LUPA PASSWORD --- */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in zoom-in-95">
+          <div className="bg-[#151515] w-full max-w-sm rounded-2xl border border-yellow-600/30 p-6 shadow-2xl">
+            <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-3">
+              <h3 className="font-bold text-white text-lg">Reset Password</h3>
+              <button onClick={() => setShowResetModal(false)} className="text-gray-500 font-bold text-xl hover:text-white transition">✕</button>
+            </div>
+            
+            <p className="text-xs text-gray-400 mb-4 leading-relaxed">
+              Masukkan alamat email yang Anda gunakan saat mendaftar. Kami akan mengirimkan tautan aman untuk membuat password baru.
+            </p>
+
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <input 
+                type="email" 
+                required
+                value={resetEmail} 
+                onChange={e => setResetEmail(e.target.value)} 
+                className="w-full bg-black border border-gray-700 rounded-lg p-3 text-white outline-none focus:border-yellow-500 transition" 
+                placeholder="Masukkan email Anda..."
+              />
+              <button 
+                type="submit" 
+                disabled={isResetting} 
+                className="w-full bg-white text-black font-bold py-3 rounded-lg text-sm hover:bg-gray-200 transition disabled:opacity-50"
+              >
+                {isResetting ? "MENGIRIM..." : "KIRIM LINK RESET"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
